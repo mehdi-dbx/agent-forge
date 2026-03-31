@@ -5,7 +5,7 @@ Logs everything to create_all_assets.log (including errors).
 
 Order:
   1. create_catalog_schema.py
-  2. create_checkin_metrics.sql, create_flights.sql, create_checkin_agents.sql, create_border_officers.sql, create_border_terminals.sql
+  2. create_<table>.sql for each CSV in data/csv/ (derived dynamically)
   3. create_genie_space.py
   4. All *.sql in data/proc
 
@@ -24,15 +24,30 @@ sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 LOG_FILE = ROOT / "create_all_assets.log"
 
-INIT_SQL = [
-    "data/init/create_checkin_metrics.sql",
-    "data/init/create_flights.sql",
-    "data/init/create_checkin_agents.sql",
-    "data/init/create_border_officers.sql",
-    "data/init/create_border_terminals.sql",
-]
+def _get_init_sql() -> list[str]:
+    """Derive init SQL paths from data/csv/*.csv — one create_<table>.sql per CSV."""
+    csv_dir = ROOT / "data" / "csv"
+    init_dir = ROOT / "data" / "init"
+    if not csv_dir.exists():
+        return []
+    paths = []
+    for csv_path in sorted(csv_dir.glob("*.csv")):
+        table = csv_path.stem.replace("-", "_")
+        sql_path = init_dir / f"create_{table}.sql"
+        if sql_path.exists():
+            paths.append(str(sql_path.relative_to(ROOT)))
+    return paths
 
-TABLES_TO_VERIFY = ["checkin_metrics", "flights", "checkin_agents", "border_officers", "border_terminals"]
+
+def _get_tables_to_verify() -> list[str]:
+    csv_dir = ROOT / "data" / "csv"
+    if not csv_dir.exists():
+        return []
+    return sorted(p.stem.replace("-", "_") for p in csv_dir.glob("*.csv"))
+
+
+INIT_SQL = _get_init_sql()
+TABLES_TO_VERIFY = _get_tables_to_verify()
 
 # ANSI (same as init_check_dbx_env.py)
 R, G, Y, B, M, C, W = "\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m", "\033[36m", "\033[0m"
@@ -196,7 +211,7 @@ def main() -> None:
 
     for sql in INIT_SQL:
         step += 1
-        if not run_step(f"run_sql {sql}", ["uv", "run", "python", "data/run_sql.py", sql], step, total_steps):
+        if not run_step(f"run_sql {sql}", ["uv", "run", "python", "data/py/run_sql.py", sql], step, total_steps):
             sys.exit(1)
 
     step += 1
@@ -206,7 +221,7 @@ def main() -> None:
     for sql_path in proc_sql:
         step += 1
         rel = str(sql_path.relative_to(ROOT))
-        if not run_step(f"run_sql {rel}", ["uv", "run", "python", "data/run_sql.py", rel], step, total_steps):
+        if not run_step(f"run_sql {rel}", ["uv", "run", "python", "data/py/run_sql.py", rel], step, total_steps):
             sys.exit(1)
 
     step += 1

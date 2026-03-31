@@ -382,10 +382,16 @@ def run_resource_genie() -> bool:
         return True
     if choice == "Create Genie Room":
         try:
-            print(f"  {B}Creating Genie space ...{W}\n")
+            room_name = input(f"  {C}Genie room name: {W}").strip()
+            if not room_name:
+                print(f"  {WARN} No name entered. Skipped.{W}\n")
+                return True
+            env = {**os.environ, "GENIE_ROOM_NAME": room_name}
+            print(f"  {B}Creating Genie space '{room_name}' ...{W}\n")
             rc = subprocess.call(
                 ["uv", "run", "python", "data/init/create_genie_space.py"],
                 cwd=ROOT,
+                env=env,
             )
             if rc == 0:
                 load_dotenv(ENV_FILE, override=True)
@@ -523,7 +529,69 @@ def list_genie_spaces() -> list[tuple[str, str]]:
         return []
 
 
-TABLES_TO_VERIFY = ["checkin_metrics", "flights", "checkin_agents", "border_officers", "border_terminals"]
+def get_csv_tables() -> list[str]:
+    """Return table names derived from data/csv/*.csv (stem, - replaced with _)."""
+    csv_dir = ROOT / "data" / "csv"
+    if not csv_dir.exists():
+        return []
+    return sorted(p.stem.replace("-", "_") for p in csv_dir.glob("*.csv"))
+
+
+TABLES_TO_VERIFY = get_csv_tables()
+
+
+def _infer_sql_type(col: str) -> str:
+    low = col.lower()
+    if any(k in low for k in ("time", "date", "timestamp", "at", "created", "updated")):
+        return "TIMESTAMP_NTZ"
+    if any(k in low for k in ("id",)):
+        return "BIGINT"
+    return "STRING"
+
+
+def _generate_create_sql(table: str, csv_path: Path) -> str:
+    """Generate a CREATE OR REPLACE TABLE stub from CSV header."""
+    import csv as csv_mod
+    from io import StringIO
+    header = csv_path.read_text(encoding="utf-8", errors="replace").splitlines()[:1]
+    if header:
+        row = next(csv_mod.reader(StringIO(header[0])))
+        col_defs = ",\n".join(f"    {c} {_infer_sql_type(c)}" for c in row)
+    else:
+        col_defs = "    -- no columns detected"
+    return (
+        f"CREATE OR REPLACE TABLE __SCHEMA_QUALIFIED__.{table} (\n"
+        f"{col_defs}\n"
+        f")\n"
+        f"USING DELTA\n"
+        f"TBLPROPERTIES (delta.enableChangeDataFeed = true);\n"
+    )
+
+
+def ensure_init_sql_files() -> list[Path]:
+    """Check data/csv/*.csv against data/init/create_<table>.sql. Generate stubs for missing ones.
+    Returns list of all init SQL paths (existing + newly created)."""
+    csv_dir = ROOT / "data" / "csv"
+    init_dir = ROOT / "data" / "init"
+    if not csv_dir.exists():
+        return []
+    csvs = sorted(csv_dir.glob("*.csv"))
+    if not csvs:
+        return []
+
+    print(f"\n  {C}Checking SQL init files for {len(csvs)} CSV(s):{W}")
+    sql_paths: list[Path] = []
+    for csv_path in csvs:
+        table = csv_path.stem.replace("-", "_")
+        sql_path = init_dir / f"create_{table}.sql"
+        if sql_path.exists():
+            print(f"  [+] {sql_path.relative_to(ROOT)}  {DIM}(exists){W}")
+        else:
+            content = _generate_create_sql(table, csv_path)
+            sql_path.write_text(content)
+            print(f"  [+] {sql_path.relative_to(ROOT)}  {G}(generated){W}")
+        sql_paths.append(sql_path)
+    return sql_paths
 
 
 def print_asset_checks() -> None:
@@ -1061,7 +1129,7 @@ def run_check_only() -> None:
 
     # Tables (tree format)
     spec = os.environ.get("PROJECT_UNITY_CATALOG_SCHEMA", "").strip()
-    tables = ["checkin_metrics", "flights", "checkin_agents", "border_officers", "border_terminals"]
+    tables = get_csv_tables()
     if "." in spec:
         catalog, schema_name = spec.split(".", 1)
         full_schema = f"{catalog}.{schema_name}"
@@ -1193,15 +1261,23 @@ def main() -> None:
     run_resource_warehouse()
     run_resource("PROJECT_UNITY_CATALOG_SCHEMA", "PROJECT_UNITY_CATALOG_SCHEMA", verify_schema, "catalog.schema")
 
-    # Tables check: if schema OK but tables missing → offer asset creation
+    # Step 1: ensure SQL init files exist for all CSVs
     load_dotenv(ENV_FILE, override=True)
     if os.environ.get("PROJECT_UNITY_CATALOG_SCHEMA"):
+        sql_paths = ensure_init_sql_files()
+
+        # Step 2: tables check + offer to run SQL files
         ok, msg = verify_tables()
         if not ok:
-            section("Tables (checkin_metrics, flights, checkin_agents, border_officers, border_terminals)")
+            section(f"Tables ({', '.join(get_csv_tables())})")
             print(f"  {FAIL} {msg}{W}")
+            if sql_paths:
+                print(f"\n  SQL files to execute:")
+                for i, p in enumerate(sql_paths):
+                    branch = "  \\-- " if i == len(sql_paths) - 1 else "  |-- "
+                    print(f"{branch}{p.relative_to(ROOT)}")
             try:
-                raw = input(f"  {C}Create project assets now? [y/N]: {W}").strip().lower()
+                raw = input(f"\n  {C}Run all SQL files and create assets? [y/N]: {W}").strip().lower()
                 if raw in ("y", "yes"):
                     print(f"  {B}Creating schema, tables, volume, Genie ...{W}\n")
                     rc = subprocess.call(
