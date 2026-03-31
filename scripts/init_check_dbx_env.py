@@ -705,6 +705,9 @@ def verify_model_endpoint() -> tuple[bool, str]:
     endpoint = os.environ.get("AGENT_MODEL_ENDPOINT", "").strip()
     if not endpoint:
         return False, "not set"
+    if endpoint.startswith("http://") or endpoint.startswith("https://"):
+        # Full URL — accept as-is, no SDK lookup possible
+        return True, f"URL ({endpoint})"
     try:
         from databricks.sdk import WorkspaceClient
         w = WorkspaceClient()
@@ -765,12 +768,12 @@ def run_resource_model_endpoint() -> bool:
         print(f"\n  {C}Action?{W}")
         for i, c in enumerate(choices, 1):
             print(f"    {B}[{i}]{W} {c}")
-        print(f"\n    {B}[0]{W} enter endpoint name manually")
+        print(f"\n    {B}[0]{W} enter endpoint name or URL manually")
         try:
             raw = input(f"  Choice (0-{len(choices)}): ").strip()
             idx = int(raw)
             if idx == 0:
-                choice = "enter endpoint name manually"
+                choice = "enter endpoint name or URL manually"
                 break
             if 1 <= idx <= len(choices):
                 choice = choices[idx - 1]
@@ -805,7 +808,7 @@ def run_resource_model_endpoint() -> bool:
     if choice in ep_choices:
         val = endpoints[ep_choices.index(choice)][0]
     else:
-        val = input(f"  Enter endpoint name: ").strip()
+        val = input(f"  Enter endpoint name or full URL: ").strip()
     if not val:
         return True
     if cur:
