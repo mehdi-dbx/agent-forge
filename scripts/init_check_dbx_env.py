@@ -529,6 +529,23 @@ def list_genie_spaces() -> list[tuple[str, str]]:
         return []
 
 
+def list_serving_endpoints() -> list[tuple[str, str]]:
+    """Return [(name, ready_state), ...] for serving endpoints in workspace."""
+    try:
+        from databricks.sdk import WorkspaceClient
+        w = WorkspaceClient()
+        endpoints = list(w.serving_endpoints.list())
+        result = []
+        for ep in endpoints:
+            name = getattr(ep, "name", "") or ""
+            state = getattr(ep, "state", None)
+            ready = str(getattr(state, "ready", "") or "") if state else ""
+            result.append((name, ready))
+        return result
+    except Exception:
+        return []
+
+
 def get_csv_tables() -> list[str]:
     """Return table names derived from data/csv/*.csv (stem, - replaced with _)."""
     csv_dir = ROOT / "data" / "csv"
@@ -673,6 +690,121 @@ def verify_genie() -> tuple[bool, str]:
         return True, getattr(sp, "title", sid)
     except Exception as e:
         return False, str(e)
+
+
+def verify_model_endpoint() -> tuple[bool, str]:
+    endpoint = os.environ.get("AGENT_MODEL_ENDPOINT", "").strip()
+    if not endpoint:
+        return False, "not set"
+    try:
+        from databricks.sdk import WorkspaceClient
+        w = WorkspaceClient()
+        ep = w.serving_endpoints.get(name=endpoint)
+        state = getattr(ep, "state", None)
+        ready = str(getattr(state, "ready", "") or "") if state else ""
+        return True, f"{endpoint} ({ready or 'OK'})"
+    except Exception as e:
+        return False, str(e)
+
+
+def run_resource_model_endpoint() -> bool:
+    """Interactive config for AGENT_MODEL_ENDPOINT with serving endpoint list as choices."""
+    from dotenv import load_dotenv
+    load_dotenv(ENV_FILE, override=True)
+
+    key = "AGENT_MODEL_ENDPOINT"
+    active, inactive, _ = parse_env_file(ENV_FILE)
+    cur = active.get(key, "").strip()
+    inact = inactive.get(key, [])
+
+    section("AGENT_MODEL_ENDPOINT")
+
+    endpoints = list_serving_endpoints()
+    if endpoints:
+        for name, state in endpoints:
+            status = f"{G}[{state}]{W}" if state == "READY" else f"{DIM}[{state or '?'}]{W}"
+            print(f"  {C}Available :{W} {name} {status}")
+    else:
+        print(f"  {DIM}No serving endpoints found (or could not connect){W}")
+
+    ok, msg = False, ""
+    if cur:
+        load_env_for_key(key, cur)
+        ok, msg = verify_model_endpoint()
+        if ok:
+            print(f"  {OK} Active: {C}{cur}{W} {G}({msg}){W}")
+        else:
+            print(f"  {FAIL} Active: {C}{cur}{W} {R}({msg}){W}")
+    else:
+        print(f"  {WARN} Not configured{W}")
+
+    if inact:
+        print(f"  {DIM}Inactive:{W}")
+        for i, (_, val) in enumerate(inact, 1):
+            print(f"    {DIM}[{i}] {val[:60]}{'...' if len(val) > 60 else ''}{W}")
+
+    choices: list[str] = []
+    if cur and ok:
+        choices.append("keep")
+    if endpoints:
+        for name, _ in endpoints:
+            choices.append(f"Available : {name}")
+    choices.append("enter endpoint name manually")
+    for i in range(1, len(inact) + 1):
+        choices.append(f"activate [{i}]")
+
+    while True:
+        print(f"\n  {C}Action?{W}")
+        for i, c in enumerate(choices, 1):
+            print(f"    {B}[{i}]{W} {c}")
+        try:
+            raw = input(f"  Choice (1-{len(choices)}): ").strip()
+            idx = int(raw)
+            if 1 <= idx <= len(choices):
+                choice = choices[idx - 1]
+                break
+        except (ValueError, EOFError):
+            pass
+        print(f"  {WARN} Invalid choice{W}")
+
+    if choice == "keep":
+        return True
+    if choice.startswith("activate ["):
+        num = int(choice.split("[")[1].rstrip("]"))
+        if 1 <= num <= len(inact):
+            line_idx = inact[num - 1][0]
+            comment_active_for_key(ENV_FILE, key)
+            uncomment_line(ENV_FILE, line_idx)
+            load_dotenv(ENV_FILE, override=True)
+            load_env_for_key(key, inact[num - 1][1])
+            ok, msg = verify_model_endpoint()
+            if ok:
+                print(f"  {OK} Activated and verified: {msg}{W}")
+            else:
+                print(f"  {FAIL} Activated but verify failed: {msg}{W}")
+                abort_step()
+        return True
+
+    # Pick from list or enter manually
+    ep_choices = [f"Available : {n}" for n, _ in endpoints]
+    if choice in ep_choices:
+        val = endpoints[ep_choices.index(choice)][0]
+    else:
+        val = input(f"  Enter endpoint name: ").strip()
+    if not val:
+        return True
+    if cur:
+        comment_active_for_key(ENV_FILE, key)
+    write_env_entry(ENV_FILE, key, val)
+    load_dotenv(ENV_FILE, override=True)
+    load_env_for_key(key, val)
+    ok, msg = verify_model_endpoint()
+    if ok:
+        print(f"  {OK} Set and verified: {msg}{W}")
+    else:
+        print(f"  {FAIL} Set but verify failed: {msg}{W}")
+        abort_step()
+    return True
 
 
 def run_resource_mlflow() -> bool:
@@ -1167,6 +1299,12 @@ def run_check_only() -> None:
     if not ok:
         all_ok = False
 
+    section("Model Endpoint")
+    ok, msg = verify_model_endpoint()
+    print(f"  {OK if ok else FAIL} AGENT_MODEL_ENDPOINT {C}({msg}){W}")
+    if not ok:
+        all_ok = False
+
     section("App grants (run_all_grants)")
     grants_ok, grants_issues = verify_app_grants()
     grants_failed = not grants_ok
@@ -1300,6 +1438,7 @@ def main() -> None:
 
     run_resource_genie()
     run_resource_mlflow()
+    run_resource_model_endpoint()
     run_resource("DBX_APP_NAME", "DBX_APP_NAME", lambda: (True, os.environ.get("DBX_APP_NAME", "")), "my-app-name")
 
     section("Done")
