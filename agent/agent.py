@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
@@ -6,6 +7,7 @@ import mlflow
 from databricks.sdk import WorkspaceClient
 from databricks_langchain import ChatDatabricks, DatabricksMCPServer, DatabricksMultiServerMCPClient
 from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
 from mlflow.genai.agent_server import invoke, stream
 from mlflow.types.responses import (
     ResponsesAgentRequest,
@@ -53,8 +55,21 @@ async def init_agent(workspace_client: Optional[WorkspaceClient] = None):
     ]
     endpoint = os.environ.get("AGENT_MODEL_ENDPOINT", "").strip()
     if not endpoint:
-        raise ValueError("AGENT_MODEL_ENDPOINT must be set (e.g. claude-sonnet-4-6, databricks-gpt-5-2)")
-    return create_agent(tools=tools, model=ChatDatabricks(endpoint=endpoint))
+        raise ValueError("AGENT_MODEL_ENDPOINT must be set (endpoint name or full invocations URL)")
+    if endpoint.startswith("http://") or endpoint.startswith("https://"):
+        # Cross-workspace endpoint: route via ChatOpenAI to hit the URL directly
+        m = re.search(r"/serving-endpoints/([^/]+)/invocations", endpoint)
+        if not m:
+            raise ValueError(f"Cannot parse endpoint name from URL: {endpoint}")
+        name = m.group(1)
+        base_url = endpoint[: endpoint.rindex("/invocations")]
+        token = os.environ.get("AGENT_MODEL_TOKEN", "").strip()
+        if not token:
+            raise ValueError("AGENT_MODEL_TOKEN must be set for cross-workspace endpoint")
+        llm = ChatOpenAI(base_url=base_url, api_key=token, model=name)
+    else:
+        llm = ChatDatabricks(endpoint=endpoint)
+    return create_agent(tools=tools, model=llm)
 
 
 @invoke()

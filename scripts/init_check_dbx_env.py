@@ -825,6 +825,72 @@ def run_resource_model_endpoint() -> bool:
     return True
 
 
+def _endpoint_is_url() -> bool:
+    """Return True if AGENT_MODEL_ENDPOINT is currently set to a full URL."""
+    ep = os.environ.get("AGENT_MODEL_ENDPOINT", "").strip()
+    return ep.startswith("http://") or ep.startswith("https://")
+
+
+def run_resource_model_token() -> bool:
+    """Interactive config for AGENT_MODEL_TOKEN (only relevant when endpoint is a cross-workspace URL)."""
+    from dotenv import load_dotenv
+    load_dotenv(ENV_FILE, override=True)
+
+    if not _endpoint_is_url():
+        return True  # local endpoint name — token not needed
+
+    key = "AGENT_MODEL_TOKEN"
+    active, _, _ = parse_env_file(ENV_FILE)
+    cur = active.get(key, "").strip()
+
+    section("AGENT_MODEL_TOKEN")
+    print(f"  {DIM}Cross-workspace endpoint detected — a PAT for that workspace is required.{W}")
+
+    if cur:
+        masked = cur[:6] + "..." + cur[-4:] if len(cur) > 10 else "***"
+        print(f"  {OK} Active: {C}{masked}{W}")
+        choices = ["keep", "replace"]
+    else:
+        print(f"  {WARN} Not set{W}")
+        choices = ["enter"]
+
+    while True:
+        print(f"\n  {C}Action?{W}")
+        for i, c in enumerate(choices, 1):
+            print(f"    {B}[{i}]{W} {c}")
+        try:
+            raw = input(f"  Choice (1-{len(choices)}): ").strip()
+            idx = int(raw)
+            if 1 <= idx <= len(choices):
+                choice = choices[idx - 1]
+                break
+        except KeyboardInterrupt:
+            print(f"\n\n  {WARN} Interrupted — exiting.{W}\n")
+            sys.exit(130)
+        except (ValueError, EOFError):
+            pass
+        print(f"  {WARN} Invalid choice{W}")
+
+    if choice == "keep":
+        return True
+
+    try:
+        val = input(f"  Enter PAT for the endpoint workspace: ").strip()
+    except KeyboardInterrupt:
+        print(f"\n\n  {WARN} Interrupted — exiting.{W}\n")
+        sys.exit(130)
+
+    if not val:
+        print(f"  {WARN} Skipped{W}")
+        return True
+
+    comment_active_for_key(ENV_FILE, key)
+    write_env_entry(ENV_FILE, key, val)
+    load_dotenv(ENV_FILE, override=True)
+    print(f"  {OK} AGENT_MODEL_TOKEN set{W}")
+    return True
+
+
 def run_resource_mlflow() -> bool:
     """Interactive config for MLFLOW_EXPERIMENT_ID with keep, enter ID manually, create new experiment."""
     from dotenv import load_dotenv
@@ -1322,6 +1388,10 @@ def run_check_only() -> None:
     print(f"  {OK if ok else FAIL} AGENT_MODEL_ENDPOINT {C}({msg}){W}")
     if not ok:
         all_ok = False
+    if _endpoint_is_url():
+        token = os.environ.get("AGENT_MODEL_TOKEN", "").strip()
+        tok_ok = bool(token)
+        print(f"  {OK if tok_ok else FAIL} AGENT_MODEL_TOKEN {'set' if tok_ok else 'not set (required for cross-workspace URL)'}")
 
     section("App grants (run_all_grants)")
     grants_ok, grants_issues = verify_app_grants()
@@ -1457,6 +1527,7 @@ def main() -> None:
     run_resource_genie()
     run_resource_mlflow()
     run_resource_model_endpoint()
+    run_resource_model_token()
     run_resource("DBX_APP_NAME", "DBX_APP_NAME", lambda: (True, os.environ.get("DBX_APP_NAME", "")), "my-app-name")
 
     section("Done")
