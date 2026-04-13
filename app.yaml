@@ -18,6 +18,11 @@ env:
     valueFrom: "experiment"
   - name: AGENT_MODEL_ENDPOINT
     value: "https://adb-984752964297111.11.azuredatabricks.net/serving-endpoints/databricks-claude-sonnet-4-6/invocations"
+  # Secret managed by deploy/sync_databricks_yml_from_env.py — requires Databricks secret scope
+  # 'agent-forge', key 'AGENT_MODEL_TOKEN'. Value: PAT for the cross-workspace model endpoint.
+  # To push manually: databricks secrets put-secret agent-forge AGENT_MODEL_TOKEN --string-value <PAT>
+  - name: AGENT_MODEL_TOKEN
+    valueFrom: "secrets/agent-forge/AGENT_MODEL_TOKEN"
   - name: PROJECT_UNITY_CATALOG_SCHEMA
     value: "vibe.main"
   - name: DATABRICKS_WAREHOUSE_ID

@@ -1297,6 +1297,12 @@ const ALLOWED_TABLES = [
 	"border_officers",
 	"border_terminals"
 ];
+const EMPTY_TABLES = new Set([
+	"checkin_metrics",
+	"checkin_agents",
+	"border_officers",
+	"border_terminals"
+]);
 const tablesRouter = Router();
 tablesRouter.use(authMiddleware);
 /**
@@ -1309,6 +1315,10 @@ tablesRouter.get("/:tableName", requireAuth, async (req, res) => {
 	if (!ALLOWED_TABLES.includes(tableName)) return res.status(400).json({
 		error: "Table not allowed",
 		allowed: [...ALLOWED_TABLES]
+	});
+	if (EMPTY_TABLES.has(tableName)) return res.json({
+		columns: [],
+		rows: []
 	});
 	let base = (process.env.API_PROXY || "").replace(/\/invocations\/?$/, "") || "http://127.0.0.1:8000";
 	if (base.startsWith("http://localhost:") || base.startsWith("https://localhost:")) base = base.replace("localhost", "127.0.0.1");

@@ -5,13 +5,16 @@ Creates databricks.yml and app.yaml from templates if they don't exist.
 Updates:
   - databricks.yml: sql_warehouse.id, genie_space.space_id, serving_endpoint.name, app name
   - app.yaml: AGENT_MODEL_ENDPOINT, PROJECT_UNITY_CATALOG_SCHEMA, DATABRICKS_WAREHOUSE_ID
+  - Databricks Secrets: pushes AGENT_MODEL_TOKEN to scope 'agent-forge' (cross-workspace only)
 
 Usage:
   uv run python deploy/sync_databricks_yml_from_env.py [--dry-run]
 """
 import argparse
+import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,6 +31,8 @@ OK  = f"{G}✓{W}"
 WARN = f"{Y}⚠{W}"
 FAIL = f"{R}✗{W}"
 ARR = f"{C}←{W}"
+
+SECRET_SCOPE = "agent-forge"
 
 DATABRICKS_YML_TEMPLATE = """\
 bundle:
@@ -99,6 +104,10 @@ env:
     valueFrom: "experiment"
   - name: AGENT_MODEL_ENDPOINT
     value: "PLACEHOLDER_ENDPOINT"
+  # Secret managed by sync script — scope 'agent-forge', key 'AGENT_MODEL_TOKEN'.
+  # To push manually: databricks secrets put-secret agent-forge AGENT_MODEL_TOKEN --string-value <PAT>
+  - name: AGENT_MODEL_TOKEN
+    valueFrom: "secrets/agent-forge/AGENT_MODEL_TOKEN"
   - name: PROJECT_UNITY_CATALOG_SCHEMA
     value: "PLACEHOLDER_SCHEMA"
   - name: DATABRICKS_WAREHOUSE_ID
@@ -122,6 +131,49 @@ def init_app_yaml(app_yml: Path, dry_run: bool) -> None:
     if not dry_run:
         app_yml.write_text(APP_YAML_TEMPLATE)
         print(f"  {OK} Created {C}{app_yml}{W}")
+
+
+def ensure_secret(token: str, dry_run: bool) -> None:
+    """Push AGENT_MODEL_TOKEN to Databricks Secrets, creating the scope if needed."""
+    result = subprocess.run(
+        ["databricks", "secrets", "list-scopes", "--output", "json"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"  {WARN} Could not list secret scopes: {result.stderr.strip()}")
+        return
+
+    try:
+        existing = {s["name"] for s in json.loads(result.stdout)}
+    except (json.JSONDecodeError, KeyError):
+        existing = set()
+
+    if SECRET_SCOPE not in existing:
+        print(f"  {ARR} Creating secret scope {C}{SECRET_SCOPE}{W}")
+        if not dry_run:
+            r = subprocess.run(
+                ["databricks", "secrets", "create-scope", SECRET_SCOPE],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                print(f"  {FAIL} Failed to create scope: {r.stderr.strip()}")
+                return
+            print(f"  {OK} Scope {C}{SECRET_SCOPE}{W} created")
+    else:
+        print(f"  {OK} Scope {C}{SECRET_SCOPE}{W} already exists")
+
+    if dry_run:
+        print(f"  {WARN} {DIM}--dry-run: secret not pushed{W}")
+        return
+
+    r = subprocess.run(
+        ["databricks", "secrets", "put-secret", SECRET_SCOPE, "AGENT_MODEL_TOKEN", "--string-value", token],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        print(f"  {FAIL} Failed to push secret: {r.stderr.strip()}")
+        return
+    print(f"  {OK} Secret {C}AGENT_MODEL_TOKEN{W} pushed to scope {C}{SECRET_SCOPE}{W}")
 
 
 def _find_production_target(content: str) -> str | None:
@@ -173,18 +225,40 @@ def main() -> int:
             content = re.sub(r"space_id: '[^']*'", f"space_id: '{genie_id}'", content, count=1)
             changes.append(("genie_space.space_id", "PROJECT_GENIE_CHECKIN", genie_id))
 
-    # serving_endpoint.name <- AGENT_MODEL_ENDPOINT
+    # serving_endpoint <- AGENT_MODEL_ENDPOINT
+    # Cross-workspace URL: remove the serving_endpoint resource (can't grant on external workspace).
+    # Local name: update serving_endpoint.name as usual.
     endpoint = os.environ.get("AGENT_MODEL_ENDPOINT", "").strip()
     if endpoint:
-        m = re.search(r"serving_endpoint:\s*\n\s+name: '([^']*)'", content)
-        if m and m.group(1) != endpoint:
-            content = re.sub(
-                r"(serving_endpoint:\s*\n\s+)name: '[^']*'",
-                r"\g<1>name: '" + endpoint + "'",
+        ep_url = re.search(r"/serving-endpoints/([^/]+)/invocations", endpoint)
+        if ep_url:
+            # Remove the serving_endpoint resource block entirely
+            new_content = re.sub(
+                r"\s*- name: 'serving_endpoint'\s*\n\s+serving_endpoint:\s*\n\s+name: '[^']*'\s*\n\s+permission: '[^']*'",
+                "",
                 content,
-                count=1,
             )
-            changes.append(("serving_endpoint.name", "AGENT_MODEL_ENDPOINT", endpoint))
+            if new_content != content:
+                content = new_content
+                changes.append(("serving_endpoint resource", "AGENT_MODEL_ENDPOINT", "removed (cross-workspace URL)"))
+
+            # Push AGENT_MODEL_TOKEN to Databricks Secrets
+            model_token = os.environ.get("AGENT_MODEL_TOKEN", "").strip()
+            if model_token:
+                print(f"\n{BOLD}Databricks Secrets:{W}")
+                ensure_secret(model_token, args.dry_run)
+            else:
+                print(f"  {WARN} AGENT_MODEL_TOKEN not set in .env.local — secret not pushed")
+        else:
+            m = re.search(r"serving_endpoint:\s*\n\s+name: '([^']*)'", content)
+            if m and m.group(1) != endpoint:
+                content = re.sub(
+                    r"(serving_endpoint:\s*\n\s+)name: '[^']*'",
+                    r"\g<1>name: '" + endpoint + "'",
+                    content,
+                    count=1,
+                )
+                changes.append(("serving_endpoint.name", "AGENT_MODEL_ENDPOINT", endpoint))
 
     # production target app name <- DBX_APP_NAME
     app_name = os.environ.get("DBX_APP_NAME", "").strip()
@@ -205,6 +279,7 @@ def main() -> int:
                 changes.append((f"targets.{target} app name", "DBX_APP_NAME", app_name))
 
     # app.yaml: AGENT_MODEL_ENDPOINT, PROJECT_UNITY_CATALOG_SCHEMA, DATABRICKS_WAREHOUSE_ID
+    # AGENT_MODEL_TOKEN is managed via Databricks Secrets — not stamped here.
     if app_yml.exists():
         app_content = app_yml.read_text()
         app_changed = False
