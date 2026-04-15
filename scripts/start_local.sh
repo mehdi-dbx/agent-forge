@@ -58,7 +58,7 @@ wait_for() {
 
 PYTHON="$ROOT/.venv/bin/python"
 if [[ ! -x "$PYTHON" ]]; then
-  echo "Error: .venv not found. Run 'python -m venv .venv && .venv/bin/pip install -e .' first."
+  echo "Error: .venv not found. Run 'uv sync' to install all dependencies."
   exit 1
 fi
 

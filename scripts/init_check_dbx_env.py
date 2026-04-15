@@ -105,22 +105,70 @@ def comment_active_for_key(path: Path, key: str) -> None:
             return
 
 
-def prompt_choice(prompt: str, choices: list[str]) -> str:
-    """Return choice string. choices like ['keep', 'add new', 'activate [1]']"""
+def _read_choice(prompt: str, n: int) -> int | None:
+    """Read a numbered menu choice from terminal.
+
+    Returns the 1-based index on Enter, or None if ESC is pressed.
+    Falls back to line-buffered input when stdin is not a tty.
+    """
+    import termios
+    import tty
+
+    print(prompt, end="", flush=True)
+
+    if not sys.stdin.isatty():
+        try:
+            raw = input("").strip()
+            idx = int(raw)
+            return idx if 1 <= idx <= n else None
+        except (ValueError, EOFError):
+            return None
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    buf = ""
+    try:
+        tty.setraw(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":                    # ESC
+                print(f" {DIM}(cancelled){W}")
+                return None
+            if ch in ("\r", "\n"):              # Enter
+                print()
+                try:
+                    idx = int(buf)
+                    return idx if 1 <= idx <= n else None
+                except ValueError:
+                    return None
+            if ch in ("\x7f", "\x08"):          # Backspace
+                if buf:
+                    buf = buf[:-1]
+                    print("\b \b", end="", flush=True)
+            elif ch.isdigit():
+                buf += ch
+                print(ch, end="", flush=True)
+            elif ch == "\x03":                  # Ctrl-C
+                raise KeyboardInterrupt
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def prompt_choice(prompt: str, choices: list[str]) -> str | None:
+    """Return choice string, or None if ESC was pressed."""
     while True:
         print(f"\n  {C}{prompt}{W}")
         for i, c in enumerate(choices, 1):
             print(f"    {B}[{i}]{W} {c}")
         try:
-            raw = input(f"  Choice (1-{len(choices)}): ").strip()
-            idx = int(raw)
-            if 1 <= idx <= len(choices):
-                return choices[idx - 1]
+            idx = _read_choice(f"  Choice (1-{len(choices)}): ", len(choices))
         except KeyboardInterrupt:
             print(f"\n\n  {WARN} Interrupted — exiting.{W}\n")
             sys.exit(130)
-        except (ValueError, EOFError):
-            pass
+        if idx is None:
+            return None
+        if 1 <= idx <= len(choices):
+            return choices[idx - 1]
         print(f"  {WARN} Invalid choice{W}")
 
 
@@ -164,7 +212,6 @@ def run_resource_warehouse() -> bool:
         choices.append("add new")
     else:
         choices.append("enter new")
-    keep_count = len(choices)
     if whs:
         for name, wh_id in whs:
             choices.append(f"Available : {name} ({wh_id})")
@@ -178,22 +225,17 @@ def run_resource_warehouse() -> bool:
         print(f"\n  {C}Action?{W}")
         for i, c in enumerate(choices, 1):
             print(f"    {B}[{i}]{W} {c}")
-        try:
-            raw = input(f"  Choice (1-{len(choices)}): ").strip()
-            idx = int(raw)
-            if 1 <= idx <= len(choices):
-                choice = choices[idx - 1]
-                break
-        except KeyboardInterrupt:
-            print(f"\n\n  {WARN} Interrupted — exiting.{W}\n")
-            sys.exit(130)
-        except (ValueError, EOFError):
-            pass
+        idx = _read_choice(f"  Choice (1-{len(choices)}): ", len(choices))
+        if idx is None:
+            return True
+        if 1 <= idx <= len(choices):
+            choice = choices[idx - 1]
+            break
         print(f"  {WARN} Invalid choice{W}")
 
     if choice == "keep":
         return True
-    if choice.startswith("activate ["):
+    if choice and choice.startswith("activate ["):
         num = int(choice.split("[")[1].rstrip("]"))
         if 1 <= num <= len(inact):
             line_idx = inact[num - 1][0]
@@ -229,6 +271,33 @@ def run_resource_warehouse() -> bool:
         print(f"  {FAIL} Set but verify failed: {msg}{W}")
         abort_step()
     return True
+
+
+def _offer_create_pat() -> None:
+    """Offer to create a 7-day PAT for the current workspace and save as DATABRICKS_TOKEN."""
+    try:
+        raw = input(f"\n  {C}Create a 7-day PAT for this workspace and save as DATABRICKS_TOKEN? [y/N]: {W}").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if raw not in ("y", "yes"):
+        print(f"  {DIM}Skipped{W}")
+        return
+    try:
+        from databricks.sdk import WorkspaceClient
+        w = WorkspaceClient()
+        response = w.tokens.create(comment="agent-forge init (7-day)", lifetime_seconds=604800)
+        token_value = response.token_value
+        if not token_value:
+            print(f"  {FAIL} No token value returned{W}")
+            return
+        from dotenv import load_dotenv
+        comment_active_for_key(ENV_FILE, "DATABRICKS_TOKEN")
+        write_env_entry(ENV_FILE, "DATABRICKS_TOKEN", token_value)
+        load_dotenv(ENV_FILE, override=True)
+        masked = _redact(token_value)
+        print(f"  {OK} PAT created (7 days) and saved as DATABRICKS_TOKEN: {C}{masked}{W}")
+    except Exception as e:
+        print(f"  {FAIL} Failed to create PAT: {e}{W}")
 
 
 def run_resource_profile() -> bool:
@@ -286,22 +355,17 @@ def run_resource_profile() -> bool:
         print(f"\n  {C}Action?{W}")
         for i, c in enumerate(choices, 1):
             print(f"    {B}[{i}]{W} {c}")
-        try:
-            raw = input(f"  Choice (1-{len(choices)}): ").strip()
-            idx = int(raw)
-            if 1 <= idx <= len(choices):
-                choice = choices[idx - 1]
-                break
-        except KeyboardInterrupt:
-            print(f"\n\n  {WARN} Interrupted — exiting.{W}\n")
-            sys.exit(130)
-        except (ValueError, EOFError):
-            pass
+        idx = _read_choice(f"  Choice (1-{len(choices)}): ", len(choices))
+        if idx is None:
+            return True
+        if 1 <= idx <= len(choices):
+            choice = choices[idx - 1]
+            break
         print(f"  {WARN} Invalid choice{W}")
 
     if choice == "keep":
         return True
-    if choice.startswith("activate ["):
+    if choice and choice.startswith("activate ["):
         num = int(choice.split("[")[1].rstrip("]"))
         if 1 <= num <= len(inact):
             line_idx = inact[num - 1][0]
@@ -312,6 +376,7 @@ def run_resource_profile() -> bool:
             ok, msg = verify_host_token()
             if ok:
                 print(f"  {OK} Activated and verified: {msg}{W}")
+                _offer_create_pat()
             else:
                 print(f"  {FAIL} Activated but verify failed: {msg}{W}")
                 abort_step()
@@ -333,6 +398,7 @@ def run_resource_profile() -> bool:
     ok, msg = verify_host_token()
     if ok:
         print(f"  {OK} Set and verified: {msg}{W}")
+        _offer_create_pat()
     else:
         print(f"  {FAIL} Set but verify failed: {msg}{W}")
         abort_step()
@@ -386,6 +452,9 @@ def run_resource_genie() -> bool:
     # When no spaces from API: still show choices (enter space ID, Create Genie Room)
     # Don't block - list_spaces can return empty due to permissions/API behavior
     choice = prompt_choice("Action?", choices)
+    if choice is None:
+        print(f"  {DIM}Skipped{W}")
+        return True
 
     if choice == "keep":
         return True
@@ -415,7 +484,7 @@ def run_resource_genie() -> bool:
         except (EOFError, KeyboardInterrupt):
             print(f"  {DIM}Skipped{W}\n")
         return True
-    if choice.startswith("activate ["):
+    if choice and choice.startswith("activate ["):
         num = int(choice.split("[")[1].rstrip("]"))
         if 1 <= num <= len(inact):
             line_idx = inact[num - 1][0]
@@ -453,6 +522,123 @@ def run_resource_genie() -> bool:
     return True
 
 
+def run_resource_host() -> bool:
+    """Interactive config for DATABRICKS_HOST — lists available profiles as workspace options."""
+    from dotenv import load_dotenv
+    load_dotenv(ENV_FILE, override=True)
+
+    key = "DATABRICKS_HOST"
+    active, _, _ = parse_env_file(ENV_FILE)
+    cur = active.get(key, "").strip()
+
+    section("Connection: DATABRICKS_HOST")
+
+    profiles = list_dbx_profiles()
+
+    if cur:
+        ok, msg = verify_host_only()
+        if ok:
+            print(f"  {OK} Active: {C}{cur}{W}")
+        else:
+            print(f"  {FAIL} Active: {C}{cur}{W} {R}({msg}){W}")
+        choices = ["keep", "change"]
+    else:
+        print(f"  {WARN} Not configured{W}")
+        choices = ["enter manually"]
+
+    if profiles:
+        print(f"\n  {DIM}Available workspaces (from Databricks CLI profiles):{W}")
+        for name, valid in profiles:
+            status = f"{G}[valid]{W}" if valid else f"{DIM}[invalid]{W}"
+            print(f"    {C}•{W} {name} {status}")
+        choices = ["use profile workspace"] + choices
+
+    print(f"\n  {C}Action?{W}")
+    for i, c in enumerate(choices, 1):
+        print(f"    {B}[{i}]{W} {c}")
+    idx = _read_choice(f"  Choice (1-{len(choices)}): ", len(choices))
+    if idx is None:
+        return True
+    choice = choices[idx - 1] if 1 <= idx <= len(choices) else choices[0]
+
+    if choice == "keep":
+        return True
+
+    if choice == "use profile workspace":
+        # Let user pick a specific profile → extract its host
+        print(f"\n  {C}Pick a profile:{W}")
+        for i, (name, valid) in enumerate(profiles, 1):
+            status = f"{G}[valid]{W}" if valid else f"{DIM}[invalid]{W}"
+            print(f"    {B}[{i}]{W} {name} {status}")
+        pidx = _read_choice(f"  Choice (1-{len(profiles)}): ", len(profiles))
+        if pidx is None or not (1 <= pidx <= len(profiles)):
+            return True
+        profile_name = profiles[pidx - 1][0]
+
+        # Extract host from `databricks auth env --profile <name>`
+        try:
+            result = subprocess.run(
+                ["databricks", "auth", "env", "--profile", profile_name],
+                capture_output=True, text=True,
+            )
+            host = ""
+            for line in result.stdout.splitlines():
+                if "DATABRICKS_HOST" in line:
+                    host = line.split("=", 1)[-1].strip().strip('"').strip("'")
+                    break
+            if not host:
+                # Fall back: parse from profiles output
+                for name, _ in profiles:
+                    if name == profile_name:
+                        # re-run profiles to get host
+                        r2 = subprocess.run(["databricks", "auth", "profiles"], capture_output=True, text=True)
+                        for pline in r2.stdout.splitlines():
+                            if pline.strip().startswith(profile_name):
+                                parts = pline.split()
+                                if len(parts) >= 2:
+                                    host = parts[1]
+                                break
+                        break
+        except Exception:
+            host = ""
+
+        if not host:
+            print(f"  {WARN} Could not extract host for profile {profile_name} — enter manually{W}")
+            host = input(f"  Enter DATABRICKS_HOST: ").strip()
+
+        if not host:
+            return True
+
+        # Set DATABRICKS_HOST + pre-set DATABRICKS_CONFIG_PROFILE
+        if cur:
+            comment_active_for_key(ENV_FILE, key)
+        write_env_entry(ENV_FILE, key, host)
+        comment_active_for_key(ENV_FILE, "DATABRICKS_CONFIG_PROFILE")
+        write_env_entry(ENV_FILE, "DATABRICKS_CONFIG_PROFILE", profile_name)
+        load_dotenv(ENV_FILE, override=True)
+        load_env_for_key(key, host)
+        print(f"  {OK} Host set: {C}{host}{W}")
+        print(f"  {OK} Profile pre-set: {C}{profile_name}{W}")
+        return True
+
+    # Manual entry
+    val = input(f"  Enter DATABRICKS_HOST (https://....databricks.com): ").strip()
+    if not val:
+        return True
+    if cur:
+        comment_active_for_key(ENV_FILE, key)
+    write_env_entry(ENV_FILE, key, val)
+    load_dotenv(ENV_FILE, override=True)
+    load_env_for_key(key, val)
+    ok, msg = verify_host_only()
+    if ok:
+        print(f"  {OK} Set: {C}{val}{W}")
+    else:
+        print(f"  {FAIL} {msg}{W}")
+        abort_step()
+    return True
+
+
 def verify_host_only() -> tuple[bool, str]:
     """Verify DATABRICKS_HOST is set and looks like a URL."""
     host = os.environ.get("DATABRICKS_HOST", "").strip()
@@ -465,19 +651,39 @@ def verify_host_only() -> tuple[bool, str]:
 
 def verify_host_token() -> tuple[bool, str]:
     """Verify DATABRICKS_HOST + token/profile work. Return (ok, msg)."""
-    host = os.environ.get("DATABRICKS_HOST", "").strip()
+    import json
+    import urllib.error
+    import urllib.request
+    host = os.environ.get("DATABRICKS_HOST", "").strip().rstrip("/")
     token = os.environ.get("DATABRICKS_TOKEN", "").strip()
     profile = os.environ.get("DATABRICKS_CONFIG_PROFILE", "").strip()
     if not host:
         return False, "DATABRICKS_HOST not set"
-    if not token and not profile:
+    if token:
+        # Verify the PAT directly via raw HTTP — no SDK fallback chains
+        try:
+            req = urllib.request.Request(
+                f"{host}/api/2.0/preview/scim/v2/Me",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+            return True, f"OK → {host} ({data.get('userName', '?')})"
+        except urllib.error.HTTPError as e:
+            return False, f"HTTP {e.code} — token invalid or wrong workspace"
+        except Exception as e:
+            return False, str(e)
+    elif profile:
+        # Profile auth — use SDK (no token to test directly)
+        try:
+            from databricks.sdk import WorkspaceClient
+            w = WorkspaceClient(host=host, profile=profile)
+            me = w.current_user.me()
+            return True, f"OK → {host} ({me.user_name})"
+        except Exception as e:
+            return False, str(e)
+    else:
         return False, "Need DATABRICKS_TOKEN or DATABRICKS_CONFIG_PROFILE"
-    try:
-        from databricks.sdk import WorkspaceClient
-        WorkspaceClient()
-        return True, "Connection OK"
-    except Exception as e:
-        return False, str(e)
 
 
 def verify_warehouse() -> tuple[bool, str]:
@@ -764,30 +970,23 @@ def run_resource_model_endpoint() -> bool:
     for i in range(1, len(inact) + 1):
         choices.append(f"activate [{i}]")
 
+    all_choices = choices + ["enter endpoint name or URL manually"]
     while True:
         print(f"\n  {C}Action?{W}")
         for i, c in enumerate(choices, 1):
             print(f"    {B}[{i}]{W} {c}")
-        print(f"\n    {B}[0]{W} enter endpoint name or URL manually")
-        try:
-            raw = input(f"  Choice (0-{len(choices)}): ").strip()
-            idx = int(raw)
-            if idx == 0:
-                choice = "enter endpoint name or URL manually"
-                break
-            if 1 <= idx <= len(choices):
-                choice = choices[idx - 1]
-                break
-        except KeyboardInterrupt:
-            print(f"\n\n  {WARN} Interrupted — exiting.{W}\n")
-            sys.exit(130)
-        except (ValueError, EOFError):
-            pass
+        print(f"\n    {B}[{len(all_choices)}]{W} enter endpoint name or URL manually")
+        idx = _read_choice(f"  Choice (1-{len(all_choices)}): ", len(all_choices))
+        if idx is None:
+            return True
+        if 1 <= idx <= len(all_choices):
+            choice = all_choices[idx - 1]
+            break
         print(f"  {WARN} Invalid choice{W}")
 
     if choice == "keep":
         return True
-    if choice.startswith("activate ["):
+    if choice and choice.startswith("activate ["):
         num = int(choice.split("[")[1].rstrip("]"))
         if 1 <= num <= len(inact):
             line_idx = inact[num - 1][0]
@@ -847,7 +1046,7 @@ def run_resource_model_token() -> bool:
     print(f"  {DIM}Cross-workspace endpoint detected — a PAT for that workspace is required.{W}")
 
     if cur:
-        masked = cur[:6] + "..." + cur[-4:] if len(cur) > 10 else "***"
+        masked = _redact(cur)
         print(f"  {OK} Active: {C}{masked}{W}")
         choices = ["keep", "replace"]
     else:
@@ -858,17 +1057,12 @@ def run_resource_model_token() -> bool:
         print(f"\n  {C}Action?{W}")
         for i, c in enumerate(choices, 1):
             print(f"    {B}[{i}]{W} {c}")
-        try:
-            raw = input(f"  Choice (1-{len(choices)}): ").strip()
-            idx = int(raw)
-            if 1 <= idx <= len(choices):
-                choice = choices[idx - 1]
-                break
-        except KeyboardInterrupt:
-            print(f"\n\n  {WARN} Interrupted — exiting.{W}\n")
-            sys.exit(130)
-        except (ValueError, EOFError):
-            pass
+        idx = _read_choice(f"  Choice (1-{len(choices)}): ", len(choices))
+        if idx is None:
+            return True
+        if 1 <= idx <= len(choices):
+            choice = choices[idx - 1]
+            break
         print(f"  {WARN} Invalid choice{W}")
 
     if choice == "keep":
@@ -928,6 +1122,9 @@ def run_resource_mlflow() -> bool:
         choices.append(f"activate [{i}]")
 
     choice = prompt_choice("Action?", choices)
+    if choice is None:
+        print(f"  {DIM}Skipped{W}")
+        return True
 
     if choice == "keep":
         return True
@@ -951,7 +1148,7 @@ def run_resource_mlflow() -> bool:
         except (EOFError, KeyboardInterrupt):
             print(f"  {DIM}Skipped{W}\n")
         return True
-    if choice.startswith("activate ["):
+    if choice and choice.startswith("activate ["):
         num = int(choice.split("[")[1].rstrip("]"))
         if 1 <= num <= len(inact):
             line_idx = inact[num - 1][0]
@@ -1108,10 +1305,10 @@ def load_env_for_key(key: str, value: str) -> None:
 _SECRET_KEYS = {"DATABRICKS_TOKEN", "AGENT_MODEL_TOKEN"}
 
 def _redact(val: str) -> str:
-    """Mask a secret value for display: show first 6 + last 4 chars."""
+    """Mask a secret value for display: show first 6 + stars + last 4 chars."""
     if len(val) > 10:
-        return val[:6] + "..." + val[-4:]
-    return "***"
+        return val[:6] + "*" * (len(val) - 10) + val[-4:]
+    return "*" * len(val)
 
 
 def run_resource(
@@ -1154,6 +1351,7 @@ def run_resource(
     ADD_NEW_CATALOG = "add new catalog (this will create all related assets)"
     CREATE_ASSETS_NOW = "create all assets now"
     KEEP_AND_CREATE_ASSETS = "keep + create all missing assets"
+    USE_EXISTING_CATALOG = "use existing catalog (pick from available)"
     choices: list[str] = []
     tables_ok = True
     if key == "PROJECT_UNITY_CATALOG_SCHEMA" and cur:
@@ -1166,7 +1364,23 @@ def run_resource(
         else:
             choices = ["keep", "add new"]
     elif cur and key == "PROJECT_UNITY_CATALOG_SCHEMA":
-        choices = [CREATE_ASSETS_NOW, ADD_NEW_CATALOG]
+        # Detect whether the catalog itself is inaccessible (vs just missing schema)
+        _catalog_accessible = False
+        if "." in cur:
+            _cat = cur.split(".", 1)[0]
+            try:
+                from databricks.sdk import WorkspaceClient as _WC
+                _WC().catalogs.get(name=_cat)
+                _catalog_accessible = True
+            except Exception:
+                pass
+        if _catalog_accessible:
+            # Catalog exists, just schema/assets missing — create is safe
+            choices = [CREATE_ASSETS_NOW, USE_EXISTING_CATALOG, ADD_NEW_CATALOG]
+        else:
+            # Catalog not accessible — creating will fail, lead with existing catalog picker
+            print(f"  {WARN} Catalog not accessible — cannot create it on this workspace. Pick an existing one.{W}")
+            choices = [USE_EXISTING_CATALOG, CREATE_ASSETS_NOW, ADD_NEW_CATALOG]
     elif cur:
         choices = ["add new"]
     else:
@@ -1175,6 +1389,8 @@ def run_resource(
         choices.append(f"activate [{i}]")
     if not choices:
         choices = ["enter new"]
+    if key == "DATABRICKS_TOKEN":
+        choices.append("generate 7-day PAT")
 
     # Schema invalid and only add-new-catalog (no cur) → run create_all_assets (mandatory)
     if key == "PROJECT_UNITY_CATALOG_SCHEMA" and choices == [ADD_NEW_CATALOG]:
@@ -1223,6 +1439,9 @@ def run_resource(
             abort_step()
 
     choice = prompt_choice("Action?" if prompt_hint else "Action?", choices)
+    if choice is None:
+        print(f"  {DIM}Skipped{W}")
+        return True
 
     if choice == "keep":
         return True
@@ -1250,6 +1469,39 @@ def run_resource(
             print(f"\n  {FAIL} Asset creation exited with {rc}{W}\n")
             abort_step()
         return True
+    if choice == USE_EXISTING_CATALOG and key == "PROJECT_UNITY_CATALOG_SCHEMA":
+        # List catalogs the user has access to and let them pick one
+        try:
+            from databricks.sdk import WorkspaceClient
+            w = WorkspaceClient()
+            catalogs = [c.name for c in w.catalogs.list() if c.name]
+        except Exception as e:
+            print(f"  {FAIL} Could not list catalogs: {e}{W}")
+            return True
+        if not catalogs:
+            print(f"  {WARN} No accessible catalogs found{W}")
+            return True
+        _, current_schema = (cur.split(".", 1) + ["main"])[:2] if cur else ("", "main")
+        print(f"\n  {C}Available catalogs:{W}")
+        for i, name in enumerate(catalogs, 1):
+            print(f"    {B}[{i}]{W} {name}")
+        idx = _read_choice(f"  Pick catalog (1-{len(catalogs)}): ", len(catalogs))
+        if idx is None or not (1 <= idx <= len(catalogs)):
+            return True
+        new_catalog = catalogs[idx - 1]
+        new_val = f"{new_catalog}.{current_schema}"
+        print(f"  {C}→ Setting PROJECT_UNITY_CATALOG_SCHEMA = {new_val}{W}")
+        if cur:
+            comment_active_for_key(ENV_FILE, key)
+        write_env_entry(ENV_FILE, key, new_val)
+        load_dotenv(ENV_FILE, override=True)
+        load_env_for_key(key, new_val)
+        vok, vmsg = verify_fn()
+        if vok:
+            print(f"  {OK} {G}{vmsg}{W}")
+        else:
+            print(f"  {WARN} Schema not found yet ({vmsg}) — assets may need creating{W}")
+        return True
     if choice == ADD_NEW_CATALOG and key == "PROJECT_UNITY_CATALOG_SCHEMA":
         hint = " (catalog.schema)"
         val = input(f"  Enter {key}{hint}: ").strip()
@@ -1271,7 +1523,7 @@ def run_resource(
             print(f"\n  {FAIL} Asset creation exited with {rc}{W}\n")
             abort_step()
         return True
-    if choice.startswith("activate ["):
+    if choice and choice.startswith("activate ["):
         num = int(choice.split("[")[1].rstrip("]"))
         if 1 <= num <= len(inact):
             line_idx = inact[num - 1][0]
@@ -1286,6 +1538,39 @@ def run_resource(
                 print(f"  {FAIL} Activated but verify failed: {msg}{W}")
                 abort_step()
         return True
+    if choice == "generate 7-day PAT" and key == "DATABRICKS_TOKEN":
+        host = os.environ.get("DATABRICKS_HOST", "").strip()
+        profile = os.environ.get("DATABRICKS_CONFIG_PROFILE", "").strip()
+        if not host:
+            print(f"  {FAIL} DATABRICKS_HOST not set — cannot generate PAT{W}")
+            return True
+        try:
+            from databricks.sdk import WorkspaceClient
+            if profile:
+                w = WorkspaceClient(host=host, profile=profile)
+            else:
+                w = WorkspaceClient(host=host)
+            t = w.tokens.create(comment="agent-forge init (7-day)", lifetime_seconds=604800)
+            token_value = t.token_value
+            if not token_value:
+                print(f"  {FAIL} No token value returned{W}")
+                return True
+            if cur:
+                comment_active_for_key(ENV_FILE, key)
+            write_env_entry(ENV_FILE, key, token_value)
+            load_dotenv(ENV_FILE, override=True)
+            load_env_for_key(key, token_value)
+            masked = _redact(token_value)
+            print(f"  {OK} PAT generated (7 days) and saved: {C}{masked}{W}")
+            vok, vmsg = verify_fn()
+            if vok:
+                print(f"  {OK} {G}{vmsg}{W}")
+            else:
+                print(f"  {FAIL} Verify failed: {R}{vmsg}{W}")
+        except Exception as e:
+            print(f"  {FAIL} Failed to generate PAT: {e}{W}")
+        return True
+
     # enter new / add new
     if value_choices_fn:
         val = value_choices_fn()
@@ -1356,18 +1641,10 @@ def run_resource_ka() -> bool:
     print(f"\n  {C}Action?{W}")
     for i, c in enumerate(choices, 1):
         print(f"    {B}[{i}]{W} {c}")
-    try:
-        raw = input(f"  Choice (1-{len(choices)}): ").strip()
-        idx = int(raw)
-        if 1 <= idx <= len(choices):
-            choice = choices[idx - 1]
-        else:
-            choice = choices[0]
-    except KeyboardInterrupt:
-        print(f"\n\n  {WARN} Interrupted — exiting.{W}\n")
-        sys.exit(130)
-    except (ValueError, EOFError):
-        choice = choices[0]
+    idx = _read_choice(f"  Choice (1-{len(choices)}): ", len(choices))
+    if idx is None:
+        return True
+    choice = choices[idx - 1] if 1 <= idx <= len(choices) else choices[0]
 
     if choice == "keep":
         return True
@@ -1469,15 +1746,15 @@ def run_check_only() -> None:
             all_ok = False
             uc_failed = True
 
-    section("Knowledge Assistants")
-    ok, msg = verify_ka()
-    print(f"  {OK if ok else FAIL} PROJECT_KA_PASSENGERS {C}({msg}){W}")
-    if not ok:
-        all_ok = False
-
     section("Genie")
     ok, msg = verify_genie()
     print(f"  {OK if ok else FAIL} PROJECT_GENIE_CHECKIN {C}({msg}){W}")
+    if not ok:
+        all_ok = False
+
+    section("Knowledge Assistants")
+    ok, msg = verify_ka()
+    print(f"  {OK if ok else FAIL} PROJECT_KA_PASSENGERS {C}({msg}){W}")
     if not ok:
         all_ok = False
 
@@ -1566,26 +1843,26 @@ def main() -> None:
     print(f"{BOLD}{M}╚══════════════════════════════════════════════════╝{W}")
 
     # Connection: HOST + TOKEN (or PROFILE)
-    section("Connection: DATABRICKS_HOST")
-    run_resource("DATABRICKS_HOST", "DATABRICKS_HOST", verify_host_only, "https://....databricks.com")
+    run_resource_host()
 
     load_dotenv(ENV_FILE, override=True)
     if not os.environ.get("DATABRICKS_HOST"):
         print(f"  {FAIL} DATABRICKS_HOST required. Aborting.{W}")
         sys.exit(1)
 
-    section("Connection: DATABRICKS_TOKEN or DATABRICKS_CONFIG_PROFILE")
     token = os.environ.get("DATABRICKS_TOKEN", "").strip()
     profile = os.environ.get("DATABRICKS_CONFIG_PROFILE", "").strip()
     if token:
-        run_resource("DATABRICKS_TOKEN", "DATABRICKS_TOKEN", lambda: verify_host_token(), "dapi...")
+        run_resource("DATABRICKS_TOKEN", "Connection: DATABRICKS_TOKEN", lambda: verify_host_token(), "dapi...")
     elif profile:
         run_resource_profile()
     else:
         choices = ["DATABRICKS_TOKEN", "DATABRICKS_CONFIG_PROFILE"]
         c = prompt_choice("Which auth?", choices)
-        if "TOKEN" in c:
-            run_resource("DATABRICKS_TOKEN", "DATABRICKS_TOKEN", lambda: verify_host_token(), "dapi...")
+        if c is None:
+            print(f"  {DIM}Skipped{W}")
+        elif "TOKEN" in c:
+            run_resource("DATABRICKS_TOKEN", "Connection: DATABRICKS_TOKEN", lambda: verify_host_token(), "dapi...")
         else:
             run_resource_profile()
 
@@ -1677,8 +1954,8 @@ def main() -> None:
         print(f"\n\n  {WARN} Interrupted — exiting.{W}\n")
         sys.exit(130)
 
-    run_resource_ka()
     run_resource_genie()
+    run_resource_ka()
     run_resource_mlflow()
     run_resource_model_endpoint()
     run_resource_model_token()

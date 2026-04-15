@@ -57,11 +57,19 @@ def main() -> None:
     wh = os.environ.get("DATABRICKS_WAREHOUSE_ID") or next(iter(w.warehouses.list())).id
     wh_id = str(getattr(wh, "id", wh) or wh)
 
-    _wait_for_statement(w, wh_id, f"CREATE CATALOG IF NOT EXISTS `{catalog}`")
-    print(f"Catalog {catalog} ready (created or already existed)")
+    try:
+        w.catalogs.get(name=catalog)
+        print(f"Catalog {catalog} already exists — skipping CREATE CATALOG")
+    except Exception:
+        _wait_for_statement(w, wh_id, f"CREATE CATALOG IF NOT EXISTS `{catalog}`")
+        print(f"Catalog {catalog} created")
 
-    _wait_for_statement(w, wh_id, f"CREATE SCHEMA IF NOT EXISTS `{catalog}`.`{schema}`")
-    print(f"Schema {spec} ready (created or already existed)")
+    try:
+        w.schemas.get(full_name=f"{catalog}.{schema}")
+        print(f"Schema {spec} already exists — skipping CREATE SCHEMA")
+    except Exception:
+        _wait_for_statement(w, wh_id, f"CREATE SCHEMA IF NOT EXISTS `{catalog}`.`{schema}`")
+        print(f"Schema {spec} created")
 
 
 if __name__ == "__main__":

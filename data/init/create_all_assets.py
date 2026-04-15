@@ -117,6 +117,9 @@ def run_step(name: str, cmd: list[str], current: int = 0, total: int = 0) -> boo
         return False
     print(f"  {OK} {name}{W}")
     _log_plain(f"OK {name}")
+    # Reload env after each step so subsequent steps and verification pick up freshly written values
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env.local", override=True)
     return True
 
 

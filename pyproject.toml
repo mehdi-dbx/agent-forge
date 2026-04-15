@@ -1,0 +1,31 @@
+[project]
+name = "agent-forge"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "databricks-sdk>=0.102.0",        # >=0.102.0 required for knowledge_assistants API
+    "databricks-langchain",
+    "mlflow>=2.0",
+    "python-dotenv",
+    "pyyaml",
+    "fastapi",
+    "uvicorn",
+    "openai",
+    "langchain-community",
+    "langchain-openai",
+    "langgraph",
+    "pydantic>=2.0",
+    "pydantic-settings",
+    "requests",
+    "httpx",
+    "pandas",
+    "pyarrow",
+    "tenacity",
+    "rich",
+    "tabulate",
+    "flask",
+    "flask-cors",
+]
+
+[tool.uv]
+native-tls = true
