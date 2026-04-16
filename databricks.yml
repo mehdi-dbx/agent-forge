@@ -1,10 +1,6 @@
 bundle:
   name: agent-forge
 
-sync:
-  include:
-    - "e2e-chatbot-app-next/client/dist/**"
-
 resources:
   experiments:
     agent_experiment:

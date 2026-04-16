@@ -238,16 +238,6 @@ else
   ok "App compute is ${C}${_cs}${W}"
 fi
 
-# Build client bundle if npm is available (output goes to client/dist, uploaded by bundle deploy)
-_CLIENT_DIR="$(dirname "$0")/../e2e-chatbot-app-next"
-if command -v npm &>/dev/null && [[ -f "$_CLIENT_DIR/package.json" ]]; then
-  info "Building frontend client..."
-  if (cd "$_CLIENT_DIR" && npm run build:client --silent 2>&1 | tail -3); then
-    ok "Frontend client built"
-  else
-    warn "Frontend client build failed — deploying with existing dist if present"
-  fi
-fi
 
 if ! run_step "databricks bundle deploy" databricks bundle deploy; then
   abort "Bundle deploy failed"
