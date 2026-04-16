@@ -81,6 +81,19 @@ def parse_env_file(path: Path) -> tuple[dict[str, str], dict[str, list[tuple[int
     return active, inactive, lines
 
 
+def _clear_bundle_state_if_host_changed(new_host: str) -> None:
+    """If DATABRICKS_HOST is changing, wipe .databricks/bundle/ so stale Terraform
+    state from the old workspace doesn't break the next deploy."""
+    import shutil
+    cur = os.environ.get("DATABRICKS_HOST", "").strip().rstrip("/")
+    new = new_host.strip().rstrip("/")
+    if cur and new and cur != new:
+        bundle_dir = ROOT / ".databricks" / "bundle"
+        if bundle_dir.exists():
+            shutil.rmtree(bundle_dir)
+            print(f"  {OK} Cleared stale bundle state ({DIM}.databricks/bundle/{W})")
+
+
 def write_env_entry(path: Path, key: str, value: str) -> None:
     """Append key=value. Existing active lines for this key are left as-is (commented out first by the caller)."""
     lines = path.read_text().splitlines() if path.exists() else []
@@ -669,6 +682,7 @@ def run_resource_host() -> bool:
                 continue
 
             # Set DATABRICKS_HOST + pre-set DATABRICKS_CONFIG_PROFILE
+            _clear_bundle_state_if_host_changed(host)
             if cur:
                 comment_active_for_key(ENV_FILE, key)
             write_env_entry(ENV_FILE, key, host)
@@ -704,6 +718,7 @@ def run_resource_host() -> bool:
             raw = _read_line("Press Enter once browser login is complete, or ESC to cancel: ")
             if raw is None:
                 continue
+            _clear_bundle_state_if_host_changed(new_host)
             if cur:
                 comment_active_for_key(ENV_FILE, key)
             write_env_entry(ENV_FILE, key, new_host)
@@ -720,6 +735,7 @@ def run_resource_host() -> bool:
         val = _read_line(f"Enter DATABRICKS_HOST (https://....databricks.com): ")
         if not val:
             continue
+        _clear_bundle_state_if_host_changed(val)
         if cur:
             comment_active_for_key(ENV_FILE, key)
         write_env_entry(ENV_FILE, key, val)
