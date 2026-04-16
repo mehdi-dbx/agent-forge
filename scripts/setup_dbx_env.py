@@ -1115,6 +1115,14 @@ def run_resource_model_endpoint() -> bool:
     for label, fmhost in FM_WORKSPACES:
         print(f"    {DIM}• {label}: {fmhost}{W}")
 
+    # Flavor guidance — shown upfront so user picks the right one
+    _fevm = os.environ.get("DATABRICKS_HOST", "").strip()
+    if _fevm:
+        _fevm_flavor = "Azure" if "azuredatabricks.net" in _fevm else "AWS"
+        _match_label = "Azure field eng" if _fevm_flavor == "Azure" else "AWS field eng"
+        print(f"\n  {Y}{BOLD}⚠  Your fevm workspace is {_fevm_flavor}-based.{W}")
+        print(f"  {Y}   Choose '{_match_label}' to avoid IP ACL blocks.{W}")
+
     # Find matching CLI profiles
     all_profiles = list_dbx_profiles_with_host()
     fm_profiles: list[tuple[str, str, bool]] = []  # (name, host, valid)
