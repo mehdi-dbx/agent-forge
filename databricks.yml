@@ -44,4 +44,4 @@ targets:
     resources:
       apps:
         agent_app:
-          name: 'agent-vibe-app'
+          name: 'agent-vibe-app-no-dist'
