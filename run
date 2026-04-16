@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# agent-forge task runner
+# Usage: ./run <command> [args...]
+#
+#   ./run setup    -- interactive Databricks env setup (scripts/setup_dbx_env.sh)
+#   ./run deploy   -- deploy to Databricks (deploy/deploy.sh)
+
+set -e
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+CMD="${1:-}"
+shift || true
+
+case "$CMD" in
+  setup)  exec "$ROOT/scripts/setup_dbx_env.sh" "$@" ;;
+  deploy) exec "$ROOT/deploy/deploy.sh" "$@" ;;
+  "")
+    echo "Usage: ./run <command>"
+    echo ""
+    echo "Commands:"
+    echo "  setup    Interactive Databricks env setup"
+    echo "  deploy   Deploy to Databricks"
+    exit 1
+    ;;
+  *)
+    echo "Unknown command: $CMD"
+    echo "Run ./run for available commands."
+    exit 1
+    ;;
+esac
