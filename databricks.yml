@@ -39,4 +39,4 @@ targets:
     resources:
       apps:
         agent_app:
-          name: 'agent-vibe'
+          name: 'agent-vibe-app'
