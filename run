@@ -2,8 +2,9 @@
 # agent-forge task runner
 # Usage: ./run <command> [args...]
 #
-#   ./run setup    -- interactive Databricks env setup (scripts/setup_dbx_env.sh)
-#   ./run deploy   -- deploy to Databricks (deploy/deploy.sh)
+#   ./run install  -- add repo root to PATH in shell config (run once after cloning)
+#   ./run setup    -- interactive Databricks env setup
+#   ./run deploy   -- deploy to Databricks
 
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -11,12 +12,32 @@ CMD="${1:-}"
 shift || true
 
 case "$CMD" in
+  install)
+    SHELL_RC=""
+    if [[ "$SHELL" == */zsh ]]; then
+      SHELL_RC="$HOME/.zshrc"
+    elif [[ "$SHELL" == */bash ]]; then
+      SHELL_RC="$HOME/.bashrc"
+    else
+      echo "Unknown shell: $SHELL. Add '$ROOT' to your PATH manually."
+      exit 1
+    fi
+    MARKER="# agent-forge: $ROOT"
+    if grep -qF "$MARKER" "$SHELL_RC" 2>/dev/null; then
+      echo "Already installed in $SHELL_RC"
+    else
+      printf '\n%s\nexport PATH="%s:$PATH"\n' "$MARKER" "$ROOT" >> "$SHELL_RC"
+      echo "Added to $SHELL_RC"
+    fi
+    echo "Restart your shell or run: source $SHELL_RC"
+    ;;
   setup)  exec "$ROOT/scripts/setup_dbx_env.sh" "$@" ;;
   deploy) exec "$ROOT/deploy/deploy.sh" "$@" ;;
   "")
     echo "Usage: ./run <command>"
     echo ""
     echo "Commands:"
+    echo "  install  Add repo root to PATH (run once after cloning)"
     echo "  setup    Interactive Databricks env setup"
     echo "  deploy   Deploy to Databricks"
     exit 1
