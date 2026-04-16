@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Setup Databricks environment for agent-forge.
+# Usage:
+#   ./setup          # interactive setup
+#   ./setup --check  # quick check only
+exec "$(cd "$(dirname "$0")" && pwd)/scripts/setup_dbx_env.sh" "$@"
