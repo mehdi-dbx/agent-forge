@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
-# Run as: . ./install
+# Run as: . ./install  (the leading dot is required to affect the current shell)
 # Adds repo root to PATH in shell config AND updates the current session.
 INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 "$INSTALL_ROOT/run" install
-export PATH="$INSTALL_ROOT:$PATH"
+
+# Detect if executed directly (not sourced) — PATH change won't propagate
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo ""
+  echo "[!] Run with a leading dot to activate in the current shell:"
+  echo "      . ./install"
+  echo "    Or manually: source ~/.bashrc  (or ~/.zshrc)"
+else
+  export PATH="$INSTALL_ROOT:$PATH"
+  echo "[+] 'run' is now active in this session."
+fi
