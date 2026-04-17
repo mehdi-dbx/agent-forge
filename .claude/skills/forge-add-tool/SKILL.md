@@ -129,10 +129,110 @@ uv run python -c "from tools.<tool_name> import <tool_name>; print(<tool_name>.n
 
 Then ask the agent a question that should trigger the tool and verify it appears in the tool call trace.
 
+## KA Tool Pattern (Knowledge Assistant)
+
+Use this when the tool should query a Knowledge Assistant endpoint instead of a SQL warehouse.
+
+The KA endpoint is stored in `.env.local` as `PROJECT_KA_<SLUG>` (e.g. `PROJECT_KA_PASSENGERS`).
+It is called via HTTP POST and returns a JSON response with citations.
+
+### KA tool template
+
+```python
+"""Agent tool to query the <name> Knowledge Assistant."""
+
+import json
+import os
+import time
+
+import requests
+from langchain_core.tools import tool
+
+
+def _ka_url() -> str:
+    host = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
+    endpoint = os.environ.get("PROJECT_KA_<SLUG>", "").strip()
+    if not endpoint:
+        raise EnvironmentError("PROJECT_KA_<SLUG> not set in .env.local")
+    return f"{host}/serving-endpoints/{endpoint}/invocations"
+
+
+def _token() -> str:
+    tok = os.environ.get("DATABRICKS_TOKEN", "").strip()
+    if not tok:
+        raise EnvironmentError("DATABRICKS_TOKEN not set in .env.local")
+    return tok
+
+
+def _call_ka(query: str) -> str:
+    """POST to KA endpoint, return extracted answer text."""
+    resp = requests.post(
+        _ka_url(),
+        headers={"Authorization": f"Bearer {_token()}", "Content-Type": "application/json"},
+        json={"input": [{"role": "user", "content": query}]},
+        timeout=90,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    try:
+        raw = data["output"][0]["content"][0]["text"]
+        parsed = json.loads(raw)
+        return parsed.get("answer", raw)
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+        return str(data)
+
+
+@tool
+def query_<slug>_ka(question: str) -> str:
+    """<Short docstring — when should the agent use this KA? What domain does it cover?>"""
+    try:
+        return _call_ka(question)
+    except Exception as e:
+        return f"Error: {e}"
+```
+
+### KA response schema (for reference)
+
+```json
+{
+  "output": [{
+    "content": [{
+      "text": "{\"answer\": \"...\", \"source_documents\": [{\"document_name\": \"...\", \"excerpt\": \"...\"}]}"
+    }]
+  }]
+}
+```
+
+The `answer` field contains the formatted answer. `source_documents` contains citations — the tool discards them (agent receives plain text).
+
+### Register KA tool in `agent/agent.py`
+
+Same as any other tool — import and append to the tools list:
+
+```python
+from tools.query_<slug>_ka import query_<slug>_ka
+
+tools = list(wrapped_tools) + [
+    query_flights_at_risk,
+    update_flight_risk,
+    query_<slug>_ka,   # ← add here
+]
+```
+
+### Smoke test
+
+```bash
+uv run python -c "
+from tools.query_<slug>_ka import query_<slug>_ka
+print(query_<slug>_ka.invoke({'question': 'test question'}))
+"
+```
+
 ## Notes
 
 - `get_warehouse()` uses `DATABRICKS_WAREHOUSE_ID` from env — always set in `.env.local`
 - `substitute_schema()` replaces `{catalog}.{schema}` placeholders using `PROJECT_UNITY_CATALOG_SCHEMA`
 - `get_schema_qualified()` returns `catalog.schema` string directly
 - MCP tools (Genie spaces) are added separately via `DatabricksMCPServer` in `init_mcp_client()` — not via this pattern
+- KA endpoints: `PROJECT_KA_<SLUG>` in `.env.local` — set automatically by `create_kas_from_yml.py` when KA becomes ACTIVE
 - The agent comment at `agent/agent.py:26` says: _"New same-domain tools: append to tools in init_agent and implement under tools/<name>/"_ — follow this exactly
