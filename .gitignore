@@ -23,7 +23,8 @@ venv/
 !.env.example
 
 # Logs
-logs/
+logs/*
+!logs/.gitkeep
 
 # OS
 .DS_Store
