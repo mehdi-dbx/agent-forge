@@ -5,11 +5,14 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env.
 const express        = require('express')
 const fs             = require('fs')
 const path           = require('path')
+const { spawn }      = require('child_process')
+const { execFile }   = require('child_process')
 const { buildGraph } = require('./lib/graph-builder')
 
 const PORT        = process.env.VISUAL_BACKEND_PORT || 9001
 const LAYOUT_FILE = path.resolve(__dirname, '../graph-layout.json')
 const ENV_FILE    = path.resolve(__dirname, '../../.env.local')
+const PROJECT_ROOT = path.resolve(__dirname, '../..')
 const app         = express()
 
 const SENSITIVE_PATTERN = /TOKEN|SECRET|PASSWORD|PAT\b/i
@@ -66,8 +69,27 @@ function writeEnvValues(updates) {
   fs.writeFileSync(ENV_FILE, lines.join('\n'))
 }
 
+// Comment out specific keys in .env.local (for switching to same-workspace mode)
+function commentOutKeys(keys) {
+  let raw = ''
+  try { raw = fs.readFileSync(ENV_FILE, 'utf8') } catch { return }
+  const keySet = new Set(keys)
+  const out = raw.split('\n').map(line => {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('#')) return line
+    const eq = trimmed.indexOf('=')
+    if (eq < 0) return line
+    const key = trimmed.slice(0, eq).trim()
+    return keySet.has(key) ? '#' + line : line
+  })
+  fs.writeFileSync(ENV_FILE, out.join('\n'))
+}
+
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,POST,OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  if (req.method === 'OPTIONS') return res.sendStatus(204)
   next()
 })
 app.use(express.json())
@@ -138,6 +160,302 @@ app.put('/api/env', (req, res) => {
   } catch (err) {
     console.error('[env] save error:', err)
     res.status(500).json({ error: String(err) })
+  }
+})
+
+// ─── Setup endpoints ───────────────────────────────────────────────────────────
+
+const STEP_ENV_KEYS = {
+  host:      ['DATABRICKS_HOST'],
+  auth:      ['DATABRICKS_TOKEN'],
+  warehouse: ['DATABRICKS_WAREHOUSE_ID'],
+  schema:    ['PROJECT_UNITY_CATALOG_SCHEMA'],
+  model:     ['AGENT_MODEL_ENDPOINT'],
+  genie:     ['PROJECT_GENIE_CHECKIN'],
+  ka:        ['PROJECT_KA_PASSENGERS'],
+  mlflow:    ['MLFLOW_EXPERIMENT_ID'],
+  grants:    [],  // always re-runnable, no single env key
+}
+
+// GET /api/setup/status — parse .env.local, return per-step status
+app.get('/api/setup/status', (_req, res) => {
+  try {
+    const entries = parseEnvFile()
+    const env = {}
+    for (const { key, value } of entries) env[key] = value
+
+    const steps = {}
+    for (const [step, keys] of Object.entries(STEP_ENV_KEYS)) {
+      const allSet = keys.length === 0 ? false : keys.every(k => env[k] && env[k].trim())
+      steps[step] = {
+        status: keys.length === 0 ? 'unknown' : (allSet ? 'configured' : 'missing'),
+        values: Object.fromEntries(keys.map(k => [k, env[k] || ''])),
+      }
+    }
+
+    res.json({ steps, env })
+  } catch (err) {
+    res.status(500).json({ error: String(err) })
+  }
+})
+
+// GET /api/setup/profiles — list databricks CLI profiles
+app.get('/api/setup/profiles', (_req, res) => {
+  execFile('databricks', ['auth', 'profiles'], { cwd: PROJECT_ROOT, timeout: 10000 }, (err, stdout) => {
+    if (err) {
+      return res.json({ profiles: [], error: String(err) })
+    }
+    const lines = stdout.split('\n').slice(1).filter(l => l.trim())
+    const profiles = []
+    for (const line of lines) {
+      const parts = line.trim().split(/\s{2,}/)
+      if (parts.length >= 2) {
+        const name  = parts[0].trim()
+        const host  = parts[1].trim()
+        const valid = line.toUpperCase().includes('YES')
+        if (name && host) profiles.push({ name, host, valid })
+      }
+    }
+    res.json({ profiles })
+  })
+})
+
+// GET /api/setup/resources?type=warehouses|catalogs|genie
+app.get('/api/setup/resources', (req, res) => {
+  const type = req.query.type
+
+  const SCRIPTS = {
+    warehouses: `
+from dotenv import load_dotenv; load_dotenv('.env.local', override=True)
+from databricks.sdk import WorkspaceClient; import json
+w = WorkspaceClient()
+out = [{'id': wh.id, 'name': wh.name, 'state': str(wh.state).split('.')[-1]} for wh in w.warehouses.list()]
+print(json.dumps(out))
+`.trim(),
+    catalogs: `
+from dotenv import load_dotenv; load_dotenv('.env.local', override=True)
+from databricks.sdk import WorkspaceClient; import json
+w = WorkspaceClient()
+out = [c.name for c in w.catalogs.list() if c.name]
+print(json.dumps(out))
+`.trim(),
+    genie: `
+from dotenv import load_dotenv; load_dotenv('.env.local', override=True)
+from databricks.sdk import WorkspaceClient; import json
+w = WorkspaceClient()
+try:
+  r = w.genie.list_spaces()
+  spaces = getattr(r, 'spaces', []) or []
+except:
+  spaces = []
+out = [{'id': str(getattr(s,'space_id',None) or getattr(s,'id','')), 'name': getattr(s,'title','?')} for s in spaces]
+print(json.dumps(out))
+`.trim(),
+  }
+
+  const script = SCRIPTS[type]
+  if (!script) return res.status(400).json({ error: 'unknown type: ' + type })
+
+  execFile('uv', ['run', 'python', '-c', script], {
+    cwd: PROJECT_ROOT,
+    timeout: 20000,
+  }, (err, stdout, stderr) => {
+    if (err) {
+      return res.json({ items: [], error: stderr || String(err) })
+    }
+    try {
+      const items = JSON.parse(stdout.trim())
+      res.json({ items })
+    } catch {
+      res.json({ items: [], error: 'parse error: ' + stdout.slice(0, 200) })
+    }
+  })
+})
+
+// POST /api/setup/exec — SSE stream, runs actual setup commands
+const PAT_SCRIPT = `
+from dotenv import load_dotenv; load_dotenv('.env.local', override=True)
+from scripts.py.setup_dbx_env import _profile_for_host, _isolated_client, _redact, write_env_entry, ENV_FILE
+import os
+host = os.environ['DATABRICKS_HOST'].strip()
+profile = _profile_for_host(host)
+if not profile: print('[x] No matching CLI profile for', host); exit(1)
+w = _isolated_client(profile)
+t = w.tokens.create(comment='agent-forge-init', lifetime_seconds=604800)
+write_env_entry(ENV_FILE, 'DATABRICKS_TOKEN', t.token_value)
+print('[+] PAT generated (7d):', _redact(t.token_value))
+`.trim()
+
+const SAVE_WAREHOUSE_SCRIPT = (id) => `
+from dotenv import load_dotenv; load_dotenv('.env.local', override=True)
+import re; from pathlib import Path
+f = Path('.env.local')
+lines = f.read_text().splitlines() if f.exists() else []
+new = []; found = False
+for line in lines:
+    m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=', line)
+    if m and m.group(1) == 'DATABRICKS_WAREHOUSE_ID': new.append('DATABRICKS_WAREHOUSE_ID=${id}'); found = True
+    else: new.append(line)
+if not found: new.append('DATABRICKS_WAREHOUSE_ID=${id}')
+f.write_text('\\n'.join(new) + '\\n')
+print('[+] DATABRICKS_WAREHOUSE_ID =', '${id}')
+`.trim().replace(/\$\{id\}/g, id)
+
+const SAVE_SCHEMA_SCRIPT = (catalog, schema) => `
+from dotenv import load_dotenv; load_dotenv('.env.local', override=True)
+from databricks.sdk import WorkspaceClient
+import re; from pathlib import Path; import json
+w = WorkspaceClient()
+spec = '${catalog}.${schema}'
+try:
+    w.schemas.get(full_name=spec)
+    print('[+] schema exists:', spec)
+except:
+    try:
+        w.catalogs.get(name='${catalog}')
+        w.schemas.create(name='${schema}', catalog_name='${catalog}')
+        print('[+] schema created:', spec)
+    except Exception as e2:
+        try:
+            w.catalogs.create(name='${catalog}')
+            w.schemas.create(name='${schema}', catalog_name='${catalog}')
+            print('[+] catalog + schema created:', spec)
+        except Exception as e3:
+            print('[x]', str(e3)); exit(1)
+f = Path('.env.local')
+lines = f.read_text().splitlines() if f.exists() else []
+new = []; found = False
+for line in lines:
+    m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=', line)
+    if m and m.group(1) == 'PROJECT_UNITY_CATALOG_SCHEMA': new.append('PROJECT_UNITY_CATALOG_SCHEMA=' + spec); found = True
+    else: new.append(line)
+if not found: new.append('PROJECT_UNITY_CATALOG_SCHEMA=' + spec)
+f.write_text('\\n'.join(new) + '\\n')
+print('[+] PROJECT_UNITY_CATALOG_SCHEMA =', spec)
+`.trim().replace(/\$\{catalog\}/g, catalog).replace(/\$\{schema\}/g, schema)
+
+const SAVE_GENIE_SCRIPT = (id, name) => `
+from dotenv import load_dotenv; load_dotenv('.env.local', override=True)
+import re; from pathlib import Path
+f = Path('.env.local')
+lines = f.read_text().splitlines() if f.exists() else []
+new = []; found = False
+for line in lines:
+    m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=', line)
+    if m and m.group(1) == 'PROJECT_GENIE_CHECKIN': new.append('PROJECT_GENIE_CHECKIN=${id}'); found = True
+    else: new.append(line)
+if not found: new.append('PROJECT_GENIE_CHECKIN=${id}')
+f.write_text('\\n'.join(new) + '\\n')
+print('[+] PROJECT_GENIE_CHECKIN = ${id}  (${name})')
+`.trim().replace(/\$\{id\}/g, id).replace(/\$\{name\}/g, name)
+
+app.post('/api/setup/exec', (req, res) => {
+  const { action, params = {} } = req.body || {}
+
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.setHeader('Connection', 'keep-alive')
+
+  const write = (type, data) => {
+    if (!res.writableEnded) {
+      res.write(`event:${type}\ndata:${JSON.stringify(data)}\n\n`)
+    }
+  }
+
+  const done = (ok, code = ok ? 0 : 1) => {
+    write('done', { ok, code })
+    if (!res.writableEnded) res.end()
+  }
+
+  // Load .env.local vars into subprocess environment
+  const envEntries = parseEnvFile()
+  const subEnv = { ...process.env }
+  for (const { key, value } of envEntries) subEnv[key] = value
+
+  function runCommand(cmd, args, extraEnv = {}) {
+    const proc = spawn(cmd, args, {
+      cwd: PROJECT_ROOT,
+      env: { ...subEnv, ...extraEnv },
+    })
+    proc.stdout.on('data', d => write('line', { text: d.toString(), stream: 'out' }))
+    proc.stderr.on('data', d => write('line', { text: d.toString(), stream: 'err' }))
+    proc.on('error', err => {
+      write('line', { text: '[x] ' + err.message + '\n', stream: 'err' })
+      done(false)
+    })
+    proc.on('close', code => done(code === 0, code))
+    req.on('close', () => { try { proc.kill() } catch {} })
+  }
+
+  function synthetic(lines) {
+    for (const line of lines) write('line', { text: line + '\n', stream: 'out' })
+    done(true)
+  }
+
+  switch (action) {
+    case 'exec-pat':
+      runCommand('uv', ['run', 'python', '-c', PAT_SCRIPT])
+      break
+
+    case 'exec-assets':
+      runCommand('uv', ['run', 'python', 'data/init/create_all_assets.py'])
+      break
+
+    case 'exec-mlflow':
+      runCommand('uv', ['run', 'python', 'data/init/create_mlflow_experiment.py'])
+      break
+
+    case 'exec-grants':
+      runCommand('bash', ['deploy/run_all_grants.sh'])
+      break
+
+    case 'exec-genie': {
+      const genieName = params.name || 'Checkin Metrics'
+      runCommand('uv', ['run', 'python', 'data/init/create_genie_space.py'], { GENIE_ROOM_NAME: genieName })
+      break
+    }
+
+    case 'exec-same': {
+      try {
+        commentOutKeys(['AGENT_MODEL_ENDPOINT', 'AGENT_MODEL_TOKEN'])
+        synthetic([
+          '[+] same-workspace mode selected',
+          '[+] AGENT_MODEL_ENDPOINT commented out (will use DATABRICKS_HOST at runtime)',
+          '[+] AGENT_MODEL_TOKEN commented out',
+          '[+] ready',
+        ])
+      } catch (err) {
+        write('line', { text: '[x] ' + err.message + '\n', stream: 'err' })
+        done(false)
+      }
+      break
+    }
+
+    case 'save-warehouse': {
+      const warehouseId = params.id
+      if (!warehouseId) { done(false); break }
+      runCommand('uv', ['run', 'python', '-c', SAVE_WAREHOUSE_SCRIPT(warehouseId)])
+      break
+    }
+
+    case 'save-schema': {
+      const { catalog, schema } = params
+      if (!catalog || !schema) { done(false); break }
+      runCommand('uv', ['run', 'python', '-c', SAVE_SCHEMA_SCRIPT(catalog, schema)])
+      break
+    }
+
+    case 'save-genie': {
+      const { id: genieId, name: genieName } = params
+      if (!genieId) { done(false); break }
+      runCommand('uv', ['run', 'python', '-c', SAVE_GENIE_SCRIPT(genieId, genieName || '')])
+      break
+    }
+
+    default:
+      write('line', { text: '[x] unknown action: ' + action + '\n', stream: 'err' })
+      done(false)
   }
 })
 

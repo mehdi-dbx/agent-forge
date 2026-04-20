@@ -1,0 +1,338 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+.root{display:flex;height:620px;background:var(--color-background-tertiary);border-radius:var(--border-radius-lg);overflow:hidden;border:0.5px solid var(--color-border-tertiary);}
+.canvas{flex:1;padding:20px 14px;overflow-y:auto;}
+.drawer{width:320px;border-left:0.5px solid var(--color-border-tertiary);background:var(--color-background-primary);display:flex;flex-direction:column;}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
+.env-pill{font-size:11px;color:var(--color-text-secondary);background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:20px;padding:3px 10px;font-family:var(--font-mono);}
+.dag{display:flex;flex-direction:column;gap:0;}
+.dag-row{display:flex;gap:8px;justify-content:center;}
+.node{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:7px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;min-width:130px;font-family:var(--font-mono);transition:border-color 0.1s;}
+.node:hover{border-color:var(--color-border-secondary);}
+.node.active{border:1px solid #534AB7;}
+.orb{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.orb.green{background:#1D9E75;}
+.orb.amber{background:#EF9F27;animation:pulse 1.4s infinite;}
+.orb.red{background:#E24B4A;}
+.orb.gray{background:var(--color-border-secondary);}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+.node-label{font-size:12px;font-weight:500;color:var(--color-text-primary);}
+.node-sub{font-size:10px;color:var(--color-text-tertiary);}
+.conn{display:flex;justify-content:center;height:14px;align-items:center;}
+.conn-line{width:1px;height:14px;background:var(--color-border-tertiary);}
+.dh{padding:14px 16px;border-bottom:0.5px solid var(--color-border-tertiary);}
+.dh-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;}
+.dh-label{font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:0.08em;font-family:var(--font-mono);}
+.dh-title{font-size:13px;font-weight:500;color:var(--color-text-primary);font-family:var(--font-mono);}
+.back-btn{font-size:11px;color:var(--color-text-tertiary);cursor:pointer;padding:2px 6px;border-radius:4px;border:0.5px solid var(--color-border-tertiary);}
+.trail{display:flex;align-items:center;padding:10px 16px;border-bottom:0.5px solid var(--color-border-tertiary);}
+.trail-step{font-size:10px;color:var(--color-text-tertiary);white-space:nowrap;}
+.trail-step.done{color:#1D9E75;}
+.trail-step.active{color:var(--color-text-primary);font-weight:500;}
+.trail-sep{font-size:10px;color:var(--color-border-secondary);margin:0 5px;}
+.db{flex:1;overflow-y:auto;padding:14px 16px;}
+.choice-card{border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:10px 12px;margin-bottom:8px;cursor:pointer;display:flex;align-items:flex-start;gap:10px;}
+.choice-card:hover{border-color:var(--color-border-secondary);background:var(--color-background-secondary);}
+.choice-card.selected{border:1px solid #534AB7;}
+.choice-num{font-size:11px;color:var(--color-text-tertiary);font-family:var(--font-mono);padding-top:1px;min-width:14px;}
+.choice-title{font-size:12px;font-weight:500;color:var(--color-text-primary);margin-bottom:2px;}
+.choice-desc{font-size:11px;color:var(--color-text-tertiary);}
+.choice-card.selected .choice-num{color:#534AB7;}
+.cfg-label{font-size:10px;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;}
+.profile-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);margin-bottom:6px;cursor:pointer;}
+.profile-row:hover{border-color:var(--color-border-secondary);}
+.profile-row.sel{border:1px solid #534AB7;}
+.profile-name{font-size:12px;color:var(--color-text-primary);font-family:var(--font-mono);flex:1;}
+.ptag{font-size:10px;background:#EEEDFE;color:#534AB7;border-radius:4px;padding:2px 6px;}
+.ptag.v{background:#E1F5EE;color:#0F6E56;}
+.info-box{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px 12px;font-size:11px;color:var(--color-text-secondary);margin-bottom:12px;line-height:1.6;font-family:var(--font-mono);}
+.term{background:#0e0e10;border-radius:var(--border-radius-md);padding:10px 12px;font-family:var(--font-mono);font-size:11px;line-height:1.8;height:280px;overflow-y:auto;}
+.t-green{color:#1D9E75;} .t-amber{color:#EF9F27;} .t-muted{color:#555;}
+.df{padding:12px 16px;border-top:0.5px solid var(--color-border-tertiary);}
+.run-btn{width:100%;font-size:12px;padding:8px;border-radius:var(--border-radius-md);border:1px solid #534AB7;background:transparent;color:#534AB7;cursor:pointer;font-family:var(--font-mono);}
+.run-btn:hover{background:#EEEDFE;}
+.run-btn:disabled{opacity:0.35;cursor:default;}
+.sec-btn{width:100%;font-size:12px;padding:6px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-tertiary);background:transparent;color:var(--color-text-secondary);cursor:pointer;margin-top:6px;font-family:var(--font-mono);}
+</style>
+
+<div class="root">
+  <div class="canvas">
+    <div class="topbar">
+      <span class="env-pill">.env.local</span>
+      <span style="font-size:11px;color:var(--color-text-tertiary);">4 / 9 ready</span>
+    </div>
+    <div class="dag">
+      <div class="dag-row">
+        <div class="node" id="n-host" onclick="activate('host')"><div class="orb green"></div><div><div class="node-label">host</div><div class="node-sub">e2-demo-field-eng</div></div></div>
+      </div>
+      <div class="conn"><div class="conn-line"></div></div>
+      <div class="dag-row">
+        <div class="node" id="n-auth" onclick="activate('auth')"><div class="orb green"></div><div><div class="node-label">auth</div><div class="node-sub">cli profile</div></div></div>
+      </div>
+      <div class="conn"><div class="conn-line"></div></div>
+      <div class="dag-row">
+        <div class="node" id="n-warehouse" onclick="activate('warehouse')"><div class="orb green"></div><div><div class="node-label">warehouse</div><div class="node-sub">Starter WH</div></div></div>
+      </div>
+      <div class="conn"><div class="conn-line"></div></div>
+      <div class="dag-row">
+        <div class="node" id="n-schema" onclick="activate('schema')"><div class="orb amber"></div><div><div class="node-label">schema</div><div class="node-sub">tables missing</div></div></div>
+        <div class="node" id="n-model" onclick="activate('model')"><div class="orb amber" id="model-orb"></div><div><div class="node-label">model</div><div class="node-sub">needs token</div></div></div>
+      </div>
+      <div class="conn"><div class="conn-line"></div></div>
+      <div class="dag-row">
+        <div class="node" id="n-genie" onclick="activate('genie')"><div class="orb gray"></div><div><div class="node-label">genie</div><div class="node-sub">not configured</div></div></div>
+        <div class="node" id="n-ka" onclick="activate('ka')"><div class="orb gray"></div><div><div class="node-label">ka</div><div class="node-sub">not configured</div></div></div>
+      </div>
+      <div class="conn"><div class="conn-line"></div></div>
+      <div class="dag-row">
+        <div class="node" id="n-mlflow" onclick="activate('mlflow')"><div class="orb gray"></div><div><div class="node-label">mlflow</div><div class="node-sub">not configured</div></div></div>
+        <div class="node" id="n-grants" onclick="activate('grants')"><div class="orb red"></div><div><div class="node-label">grants</div><div class="node-sub">3 issues</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer">
+    <div class="dh">
+      <div class="dh-top">
+        <div class="dh-label" id="d-label"></div>
+        <div class="back-btn" id="back-btn" onclick="goBack()" style="display:none;">← back</div>
+      </div>
+      <div class="dh-title" id="d-title"></div>
+    </div>
+    <div class="trail" id="trail"></div>
+    <div class="db" id="drawer-body"></div>
+    <div class="df" id="drawer-footer"></div>
+  </div>
+</div>
+
+<script>
+const STEPS = {
+  host:{label:'databricks host',title:'DATABRICKS_HOST',choices:[
+    {title:'keep current',desc:'e2-demo-field-eng.cloud.databricks.com — verified',action:'done'},
+    {title:'use cli profile',desc:'pick from detected workspace profiles',action:'cfg-profile'},
+    {title:'set up new profile',desc:'authenticate a brand new workspace via browser',action:'cfg-new'},
+    {title:'enter manually',desc:'paste a workspace URL directly',action:'manual'},
+  ]},
+  auth:{label:'authentication',title:'DATABRICKS_TOKEN / profile',choices:[
+    {title:'keep cli profile',desc:'e2-demo-field-eng-aws — verified',action:'done'},
+    {title:'generate 7-day PAT',desc:'create a personal access token for this workspace',action:'exec-pat'},
+    {title:'enter token manually',desc:'paste a dapi... token directly',action:'manual'},
+  ]},
+  warehouse:{label:'sql warehouse',title:'DATABRICKS_WAREHOUSE_ID',choices:[
+    {title:'keep current',desc:'Starter Warehouse — verified',action:'done'},
+    {title:'pick from workspace',desc:'list running warehouses in this workspace',action:'cfg-warehouse'},
+    {title:'enter id manually',desc:'paste a warehouse ID directly',action:'manual'},
+  ]},
+  schema:{label:'unity catalog schema',title:'PROJECT_UNITY_CATALOG_SCHEMA',choices:[
+    {title:'create all assets',desc:'provision catalog, schema, tables, volume, genie from scratch',action:'exec-assets'},
+    {title:'pick existing catalog',desc:'choose from catalogs available in this workspace',action:'cfg-catalog'},
+    {title:'enter manually',desc:'type catalog.schema directly',action:'manual'},
+  ]},
+  model:{label:'model endpoint',title:'AGENT_MODEL_ENDPOINT',choices:[
+    {title:'same workspace',desc:'use this workspace auth — no extra config needed',action:'exec-same'},
+    {title:'use existing profile',desc:'pick a CLI profile for the FM workspace, generate PAT',action:'cfg-profile'},
+    {title:'set up new workspace',desc:'run databricks auth login for a new FM host',action:'cfg-new'},
+    {title:'enter manually',desc:'paste an endpoint URL and token directly',action:'manual'},
+  ]},
+  genie:{label:'genie space',title:'PROJECT_GENIE_CHECKIN',choices:[
+    {title:'pick existing space',desc:'list genie spaces available in this workspace',action:'cfg-genie'},
+    {title:'create new room',desc:'provision a new genie room with a name',action:'exec-genie'},
+    {title:'enter id manually',desc:'paste a genie space ID directly',action:'manual'},
+  ]},
+  ka:{label:'knowledge assistant',title:'PROJECT_KA_PASSENGERS',choices:[
+    {title:'provision from pdfs',desc:'upload data/pdf/ files and create a new KA',action:'exec-ka'},
+    {title:'use existing ka',desc:'pick from KAs already in this workspace',action:'cfg-ka'},
+  ]},
+  mlflow:{label:'mlflow experiment',title:'MLFLOW_EXPERIMENT_ID',choices:[
+    {title:'create new experiment',desc:'run create_mlflow_experiment.py',action:'exec-mlflow'},
+    {title:'enter id manually',desc:'paste an experiment ID directly',action:'manual'},
+  ]},
+  grants:{label:'app grants',title:'run_all_grants.sh',choices:[
+    {title:'run grant script',desc:'apply UC table, routine and warehouse permissions',action:'exec-grants'},
+    {title:'view issues',desc:'see which grants are missing',action:'cfg-grants'},
+  ]},
+};
+
+const EXEC = {
+  'exec-same':[
+    [0,'▸ verifying same-workspace endpoint...','amber'],
+    [800,'✓ DATABRICKS_HOST set as endpoint','green'],
+    [1200,'✓ no token needed — using workspace auth','green'],
+    [1600,'✓ ready','green'],
+  ],
+  'exec-pat':[
+    [0,'▸ connecting to workspace...','amber'],
+    [700,'✓ authenticated via cli profile','green'],
+    [1200,'▸ generating 7-day PAT...','amber'],
+    [2000,'✓ DATABRICKS_TOKEN saved: dapi6f3a****e91b','green'],
+  ],
+  'exec-assets':[
+    [0,'▸ creating catalog main.agent_forge...','amber'],
+    [800,'✓ catalog ready','green'],
+    [1100,'▸ running create_tables.sql...','amber'],
+    [2000,'✓ 4 delta tables created','green'],
+    [2300,'▸ creating genie space...','amber'],
+    [3100,'✓ genie space provisioned','green'],
+    [3400,'✓ all assets ready','green'],
+  ],
+  'exec-genie':[
+    [0,'▸ creating genie room "checkin-agent"...','amber'],
+    [1200,'✓ space id: 01ef8a...','green'],
+    [1600,'✓ PROJECT_GENIE_CHECKIN saved','green'],
+  ],
+  'exec-ka':[
+    [0,'▸ creating UC volume...','amber'],
+    [700,'✓ volume ready','green'],
+    [1000,'▸ uploading 3 pdfs...','amber'],
+    [1800,'✓ pdfs uploaded','green'],
+    [2100,'▸ provisioning knowledge assistant...','amber'],
+    [3500,'✓ KA active','green'],
+  ],
+  'exec-mlflow':[
+    [0,'▸ running create_mlflow_experiment.py...','amber'],
+    [1000,'✓ experiment id: 4821937','green'],
+    [1400,'✓ MLFLOW_EXPERIMENT_ID saved','green'],
+  ],
+  'exec-grants':[
+    [0,'▸ running run_all_grants.sh...','amber'],
+    [600,'✓ UC table privileges granted','green'],
+    [1100,'✓ UC routine execute granted','green'],
+    [1600,'✓ warehouse CAN_USE granted','green'],
+    [2000,'✓ all grants applied','green'],
+  ],
+  'cfg-profile':[
+    [0,'▸ connecting to e2-demo-field-eng-aws...','amber'],
+    [800,'✓ profile authenticated','green'],
+    [1300,'▸ generating 7-day PAT...','amber'],
+    [2100,'✓ token created: dapi6f3a****e91b','green'],
+    [2500,'✓ endpoint + token saved','green'],
+  ],
+};
+
+let cur='model', step=0, sel=null;
+
+function activate(name){
+  document.querySelectorAll('.node').forEach(n=>n.classList.remove('active'));
+  const el=document.getElementById('n-'+name);
+  if(el) el.classList.add('active');
+  cur=name; step=0; sel=null; render();
+}
+
+function render(){
+  const s=STEPS[cur];
+  document.getElementById('d-label').textContent=s.label;
+  document.getElementById('d-title').textContent=s.title;
+  document.getElementById('back-btn').style.display=step>0?'block':'none';
+  const trail=document.getElementById('trail');
+  const labels=['choose','configure','execute','done'];
+  trail.innerHTML=labels.map((l,i)=>`<span class="trail-step${i<step?' done':i===step?' active':''}">${l}</span>${i<3?'<span class="trail-sep">›</span>':''}`).join('');
+  if(step===0) renderChoose();
+  else if(step===1) renderConfigure();
+  else if(step===2) renderExecute();
+  else renderDone();
+}
+
+function renderChoose(){
+  const s=STEPS[cur];
+  document.getElementById('drawer-body').innerHTML=s.choices.map((c,i)=>`
+    <div class="choice-card${sel===i?' selected':''}" onclick="pick(${i})">
+      <div class="choice-num">${i+1}</div>
+      <div><div class="choice-title">${c.title}</div><div class="choice-desc">${c.desc}</div></div>
+    </div>`).join('');
+  document.getElementById('drawer-footer').innerHTML=`<button class="run-btn" id="nb" onclick="nextStep()" ${sel===null?'disabled':''}>continue →</button>`;
+}
+
+function pick(i){
+  sel=i;
+  renderChoose();
+  document.getElementById('nb').disabled=false;
+}
+
+function nextStep(){
+  const action=STEPS[cur].choices[sel].action;
+  if(action==='done'){step=3;render();return;}
+  if(action.startsWith('exec-')||EXEC[action]){step=2;render();return;}
+  step=1;render();
+}
+
+function renderConfigure(){
+  const action=STEPS[cur].choices[sel].action;
+  let html='';
+  if(action==='cfg-profile'){
+    html=`<div class="cfg-label">select cli profile</div>
+    <div class="info-box">profiles matching known FM workspaces are highlighted</div>
+    <div class="profile-row sel"><div class="orb green"></div><div class="profile-name">e2-demo-field-eng-aws</div><span class="ptag">matching</span></div>
+    <div class="profile-row"><div class="orb green"></div><div class="profile-name">adb-field-eng-azure</div><span class="ptag v">valid</span></div>
+    <div class="profile-row"><div class="orb gray"></div><div class="profile-name">my-old-workspace</div><span style="font-size:10px;color:var(--color-text-tertiary)">invalid</span></div>`;
+  } else if(action==='cfg-new'){
+    html=`<div class="cfg-label">new workspace</div>
+    <div class="info-box">will open browser auth flow via databricks cli</div>
+    <div style="margin-bottom:8px;"><div style="font-size:11px;color:var(--color-text-tertiary);margin-bottom:4px;">workspace url</div><input style="width:100%;font-size:12px;font-family:var(--font-mono);" placeholder="https://....databricks.com"/></div>
+    <div><div style="font-size:11px;color:var(--color-text-tertiary);margin-bottom:4px;">profile name</div><input style="width:100%;font-size:12px;font-family:var(--font-mono);" placeholder="my-fm-workspace"/></div>`;
+  } else if(action==='cfg-warehouse'){
+    html=`<div class="cfg-label">available warehouses</div>
+    <div class="profile-row sel"><div class="orb green"></div><div class="profile-name">Starter Warehouse</div><span class="ptag v">running</span></div>
+    <div class="profile-row"><div class="orb green"></div><div class="profile-name">Shared Autoscaling</div><span class="ptag v">running</span></div>
+    <div class="profile-row"><div class="orb gray"></div><div class="profile-name">Dev Warehouse</div><span style="font-size:10px;color:var(--color-text-tertiary)">stopped</span></div>`;
+  } else if(action==='cfg-catalog'){
+    html=`<div class="cfg-label">available catalogs</div>
+    <div class="profile-row sel"><div class="orb green"></div><div class="profile-name">main</div></div>
+    <div class="profile-row"><div class="orb green"></div><div class="profile-name">field_demos</div></div>
+    <div class="profile-row"><div class="orb green"></div><div class="profile-name">hive_metastore</div></div>
+    <div style="margin-top:10px;font-size:11px;color:var(--color-text-tertiary);margin-bottom:4px;">schema name</div>
+    <input style="width:100%;font-size:12px;font-family:var(--font-mono);" placeholder="agent_forge"/>`;
+  } else if(action==='cfg-genie'){
+    html=`<div class="cfg-label">available genie spaces</div>
+    <div class="profile-row"><div class="orb green"></div><div class="profile-name">checkin-metrics</div></div>
+    <div class="profile-row"><div class="orb green"></div><div class="profile-name">flight-ops</div></div>`;
+  } else if(action==='cfg-ka'){
+    html=`<div class="cfg-label">existing knowledge assistants</div>
+    <div class="profile-row"><div class="orb green"></div><div class="profile-name">passenger-rights-ka</div><span class="ptag v">active</span></div>`;
+  } else if(action==='cfg-grants'){
+    html=`<div class="cfg-label">grant issues</div>
+    <div class="info-box">✗ table checkin_metrics: no SELECT<br>✗ routine execute: not granted<br>✗ warehouse CAN_USE: missing</div>`;
+  } else if(action==='manual'){
+    html=`<div class="cfg-label">manual entry</div>
+    <div style="margin-bottom:8px;"><div style="font-size:11px;color:var(--color-text-tertiary);margin-bottom:4px;">value</div><input style="width:100%;font-size:12px;font-family:var(--font-mono);" placeholder="enter value..."/></div>`;
+  }
+  document.getElementById('drawer-body').innerHTML=html;
+  document.getElementById('drawer-footer').innerHTML=`<button class="run-btn" onclick="step=2;render()">run →</button><button class="sec-btn" onclick="goBack()">back</button>`;
+}
+
+function renderExecute(){
+  const action=STEPS[cur].choices[sel].action;
+  const lines=EXEC[action]||EXEC['exec-same'];
+  document.getElementById('drawer-body').innerHTML=`<div class="term" id="term"></div>`;
+  document.getElementById('drawer-footer').innerHTML=`<button class="run-btn" disabled>running...</button>`;
+  const term=document.getElementById('term');
+  let last=0;
+  lines.forEach(([delay,text,color],idx)=>{
+    last=delay;
+    setTimeout(()=>{
+      const d=document.createElement('div');
+      d.innerHTML=`<span class="t-${color}">${text}</span>`;
+      term.appendChild(d);
+      term.scrollTop=term.scrollHeight;
+      if(idx===lines.length-1){
+        setTimeout(()=>{step=3;render();},500);
+      }
+    },delay);
+  });
+}
+
+function renderDone(){
+  const s=STEPS[cur];
+  document.getElementById('drawer-body').innerHTML=`
+    <div style="text-align:center;padding:24px 0 16px;">
+      <div style="font-size:26px;color:#1D9E75;margin-bottom:10px;">✓</div>
+      <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:4px;">configured</div>
+      <div style="font-size:11px;color:var(--color-text-tertiary);font-family:var(--font-mono);margin-bottom:20px;">${s.title}</div>
+    </div>`;
+  document.getElementById('drawer-footer').innerHTML=`<button class="run-btn" onclick="step=0;sel=null;render()">reconfigure</button>`;
+}
+
+function goBack(){if(step>0){step--;render();}}
+
+activate('model');
+</script>
