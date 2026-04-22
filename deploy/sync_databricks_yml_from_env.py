@@ -242,8 +242,19 @@ def main() -> int:
 
     # serving_endpoint <- AGENT_MODEL_ENDPOINT
     # Cross-workspace URL: remove the serving_endpoint resource (can't grant on external workspace).
+    # Same-workspace (not set): remove agent_model_token secret resource — not needed.
     # Local name: update serving_endpoint.name as usual.
     endpoint = os.environ.get("AGENT_MODEL_ENDPOINT", "").strip()
+    if not endpoint:
+        # Same-workspace mode: remove agent_model_token secret resource from databricks.yml
+        new_content = re.sub(
+            r"\s*- name: 'agent_model_token'\s*\n\s+secret:\s*\n\s+scope: '[^']*'\s*\n\s+key: '[^']*'\s*\n\s+permission: '[^']*'",
+            "",
+            content,
+        )
+        if new_content != content:
+            content = new_content
+            changes.append(("agent_model_token resource", "AGENT_MODEL_ENDPOINT", "removed (same-workspace mode)"))
     if endpoint:
         ep_url = re.search(r"/serving-endpoints/([^/]+)/invocations", endpoint)
         if ep_url:
@@ -324,17 +335,28 @@ def main() -> int:
         app_content = app_yml.read_text()
         app_changed = False
 
-        # If AGENT_MODEL_ENDPOINT is not set, clear PLACEHOLDER so deploy.sh PLACEHOLDER check
-        # doesn't abort. Agent derives same-workspace URL from DATABRICKS_HOST at runtime.
-        if not endpoint and "PLACEHOLDER_ENDPOINT" in app_content:
-            app_content = re.sub(
-                r"(AGENT_MODEL_ENDPOINT\s*\n\s+value:\s*)[\"']PLACEHOLDER_ENDPOINT[\"']",
-                r'\g<1>""',
+        # If AGENT_MODEL_ENDPOINT is not set (same-workspace mode):
+        # - clear PLACEHOLDER_ENDPOINT so deploy.sh PLACEHOLDER check doesn't abort
+        # - remove AGENT_MODEL_TOKEN valueFrom entry (resource no longer exists in databricks.yml)
+        if not endpoint:
+            if "PLACEHOLDER_ENDPOINT" in app_content:
+                app_content = re.sub(
+                    r"(AGENT_MODEL_ENDPOINT\s*\n\s+value:\s*)[\"']PLACEHOLDER_ENDPOINT[\"']",
+                    r'\g<1>""',
+                    app_content,
+                    count=1,
+                )
+                app_changed = True
+                changes.append(("app.yaml  AGENT_MODEL_ENDPOINT", None, "(cleared — same-workspace mode)"))
+            new_app = re.sub(
+                r"\s*- name: AGENT_MODEL_TOKEN\s*\n\s+valueFrom: [\"']agent_model_token[\"']\n?",
+                "\n",
                 app_content,
-                count=1,
             )
-            app_changed = True
-            changes.append(("app.yaml  AGENT_MODEL_ENDPOINT", None, "(cleared — same-workspace mode)"))
+            if new_app != app_content:
+                app_content = new_app
+                app_changed = True
+                changes.append(("app.yaml  AGENT_MODEL_TOKEN", None, "(removed — same-workspace mode)"))
 
         # If PROJECT_KA_PASSENGERS is not set, clear PLACEHOLDER so deploy.sh doesn't abort.
         if not ka_endpoint and "PLACEHOLDER_KA_ENDPOINT" in app_content:

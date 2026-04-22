@@ -87,7 +87,17 @@ async def init_agent(workspace_client: Optional[WorkspaceClient] = None):
         # Cross-workspace endpoint: build a WorkspaceClient for the remote host
         token = os.environ.get("AGENT_MODEL_TOKEN", "").strip()
         if not token:
-            raise ValueError("AGENT_MODEL_TOKEN must be set for cross-workspace endpoint")
+            token = os.environ.get("DATABRICKS_TOKEN", "").strip()
+            if token:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "AGENT_MODEL_TOKEN not set — falling back to DATABRICKS_TOKEN for cross-workspace endpoint. "
+                    "Set AGENT_MODEL_TOKEN for a dedicated PAT."
+                )
+            else:
+                raise ValueError(
+                    "AGENT_MODEL_TOKEN (or DATABRICKS_TOKEN as fallback) must be set for cross-workspace endpoint"
+                )
         # Temporarily remove local-workspace env vars so the SDK uses only the
         # explicitly passed remote host + token. Without this:
         # - On Databricks Apps: CLIENT_ID/SECRET cause "multiple auth methods"
