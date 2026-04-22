@@ -52,22 +52,28 @@ def main() -> None:
         sys.exit(1)
 
     env_path = ROOT / ".env.local"
-    key = "MLFLOW_EXPERIMENT_ID"
     lines = env_path.read_text().splitlines() if env_path.exists() else []
-    new_lines = []
-    replaced = False
-    for line in lines:
-        if line.strip().startswith(f"{key}="):
-            new_lines.append(f"{key}={experiment_id}")
-            replaced = True
-        else:
-            new_lines.append(line)
-    if not replaced:
-        new_lines.append(f"{key}={experiment_id}")
-    env_path.write_text("\n".join(new_lines) + "\n")
+
+    def _upsert(lines: list[str], key: str, value: str) -> list[str]:
+        new_lines = []
+        replaced = False
+        for line in lines:
+            if line.strip().startswith(f"{key}="):
+                new_lines.append(f"{key}={value}")
+                replaced = True
+            else:
+                new_lines.append(line)
+        if not replaced:
+            new_lines.append(f"{key}={value}")
+        return new_lines
+
+    lines = _upsert(lines, "MLFLOW_EXPERIMENT_ID", experiment_id)
+    lines = _upsert(lines, "MLFLOW_TRACKING_URI", "databricks")
+    lines = _upsert(lines, "MLFLOW_REGISTRY_URI", "databricks-uc")
+    env_path.write_text("\n".join(lines) + "\n")
 
     print(experiment_id)
-    print(f"Updated {env_path} with {key}={experiment_id}", file=sys.stderr)
+    print(f"Updated {env_path} with MLFLOW_EXPERIMENT_ID, MLFLOW_TRACKING_URI, MLFLOW_REGISTRY_URI", file=sys.stderr)
 
 
 if __name__ == "__main__":
