@@ -22,6 +22,7 @@ from agent.utils import (
 )
 from tools.query_checkin_metrics import query_checkin_metrics
 from tools.query_flights_at_risk import query_flights_at_risk
+from tools.query_passengers_ka import query_passengers_ka
 from tools.update_flight_risk import update_flight_risk
 
 # New same-domain tools: append to tools in init_agent and implement under tools/<name>/
@@ -60,6 +61,7 @@ async def init_agent(workspace_client: Optional[WorkspaceClient] = None):
         query_flights_at_risk,
         update_flight_risk,
         query_checkin_metrics,
+        query_passengers_ka,
     ]
     endpoint = os.environ.get("AGENT_MODEL_ENDPOINT", "").strip()
     databricks_host = os.environ.get("DATABRICKS_HOST", "").strip().rstrip("/")
