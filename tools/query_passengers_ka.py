@@ -15,7 +15,7 @@ def _ka_url() -> str:
     host = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
     endpoint = os.environ.get("PROJECT_KA_PASSENGERS", "").strip()
     if not host or not endpoint:
-        raise ValueError("DATABRICKS_HOST and PROJECT_KA_PASSENGERS must be set")
+        raise ValueError("PROJECT_KA_PASSENGERS is not configured")
     return f"{host}/serving-endpoints/{endpoint}/invocations"
 
 

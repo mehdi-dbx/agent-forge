@@ -287,6 +287,16 @@ def main() -> int:
                 count=1,
             )
             changes.append(("ka_endpoint.name", "PROJECT_KA_PASSENGERS", ka_endpoint))
+    else:
+        # Remove ka_endpoint resource block so PLACEHOLDER check doesn't abort
+        new_content = re.sub(
+            r"\s*- name: 'ka_endpoint'\s*\n\s+serving_endpoint:\s*\n\s+name: '[^']*'\s*\n\s+permission: '[^']*'",
+            "",
+            content,
+        )
+        if new_content != content:
+            content = new_content
+            changes.append(("ka_endpoint resource", "PROJECT_KA_PASSENGERS", "removed (not configured)"))
 
     # production target app name <- DBX_APP_NAME
     app_name = os.environ.get("DBX_APP_NAME", "").strip()
@@ -314,8 +324,8 @@ def main() -> int:
         app_content = app_yml.read_text()
         app_changed = False
 
-        # If AGENT_MODEL_ENDPOINT is not set, clear PLACEHOLDER so the PLACEHOLDER check
-        # in deploy.sh doesn't abort. Agent derives same-workspace URL from DATABRICKS_HOST.
+        # If AGENT_MODEL_ENDPOINT is not set, clear PLACEHOLDER so deploy.sh PLACEHOLDER check
+        # doesn't abort. Agent derives same-workspace URL from DATABRICKS_HOST at runtime.
         if not endpoint and "PLACEHOLDER_ENDPOINT" in app_content:
             app_content = re.sub(
                 r"(AGENT_MODEL_ENDPOINT\s*\n\s+value:\s*)[\"']PLACEHOLDER_ENDPOINT[\"']",
@@ -325,6 +335,17 @@ def main() -> int:
             )
             app_changed = True
             changes.append(("app.yaml  AGENT_MODEL_ENDPOINT", None, "(cleared — same-workspace mode)"))
+
+        # If PROJECT_KA_PASSENGERS is not set, clear PLACEHOLDER so deploy.sh doesn't abort.
+        if not ka_endpoint and "PLACEHOLDER_KA_ENDPOINT" in app_content:
+            app_content = re.sub(
+                r"(PROJECT_KA_PASSENGERS\s*\n\s+value:\s*)[\"']PLACEHOLDER_KA_ENDPOINT[\"']",
+                r'\g<1>""',
+                app_content,
+                count=1,
+            )
+            app_changed = True
+            changes.append(("app.yaml  PROJECT_KA_PASSENGERS", None, "(cleared — not configured)"))
 
         for env_name, value in [
             ("AGENT_MODEL_ENDPOINT", endpoint),
