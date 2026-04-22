@@ -314,6 +314,18 @@ def main() -> int:
         app_content = app_yml.read_text()
         app_changed = False
 
+        # If AGENT_MODEL_ENDPOINT is not set, clear PLACEHOLDER so the PLACEHOLDER check
+        # in deploy.sh doesn't abort. Agent derives same-workspace URL from DATABRICKS_HOST.
+        if not endpoint and "PLACEHOLDER_ENDPOINT" in app_content:
+            app_content = re.sub(
+                r"(AGENT_MODEL_ENDPOINT\s*\n\s+value:\s*)[\"']PLACEHOLDER_ENDPOINT[\"']",
+                r'\g<1>""',
+                app_content,
+                count=1,
+            )
+            app_changed = True
+            changes.append(("app.yaml  AGENT_MODEL_ENDPOINT", None, "(cleared — same-workspace mode)"))
+
         for env_name, value in [
             ("AGENT_MODEL_ENDPOINT", endpoint),
             ("PROJECT_UNITY_CATALOG_SCHEMA", schema_spec),

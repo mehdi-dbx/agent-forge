@@ -88,7 +88,6 @@ REQUIRED=(
   PROJECT_UNITY_CATALOG_SCHEMA
   DATABRICKS_HOST
   DATABRICKS_WAREHOUSE_ID
-  AGENT_MODEL_ENDPOINT
   PROJECT_GENIE_CHECKIN
 )
 missing=()
@@ -113,8 +112,15 @@ fi
 [[ -n "${DATABRICKS_TOKEN:-}" ]] && ok "Auth via DATABRICKS_TOKEN"
 [[ -n "${DATABRICKS_CONFIG_PROFILE:-}" && -z "${DATABRICKS_TOKEN:-}" ]] && ok "Auth via profile ${C}${DATABRICKS_CONFIG_PROFILE}${W}"
 
+# AGENT_MODEL_ENDPOINT is optional — if not set, agent derives it from DATABRICKS_HOST (same-workspace mode)
+if [[ -n "${AGENT_MODEL_ENDPOINT:-}" ]]; then
+  info "${C}AGENT_MODEL_ENDPOINT${W} = ${DIM}${AGENT_MODEL_ENDPOINT:0:70}${W}"
+else
+  info "${C}AGENT_MODEL_ENDPOINT${W} ${DIM}not set — same-workspace mode (derived from DATABRICKS_HOST at runtime)${W}"
+fi
+
 # Soft warnings (don't abort)
-[[ -z "${AGENT_MODEL_TOKEN:-}" ]] && warn "AGENT_MODEL_TOKEN not set — cross-workspace model token may be missing from secrets"
+[[ -z "${AGENT_MODEL_TOKEN:-}" && -n "${AGENT_MODEL_ENDPOINT:-}" ]] && warn "AGENT_MODEL_TOKEN not set — cross-workspace model token may be missing from secrets"
 [[ -z "${MLFLOW_EXPERIMENT_ID:-}" ]] && warn "MLFLOW_EXPERIMENT_ID not set — experiment tracking may not work"
 
 # ── Step 2: Config Sync ───────────────────────────────────────────────────────
