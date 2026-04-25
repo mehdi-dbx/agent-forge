@@ -2034,6 +2034,97 @@ def run_resource_ka() -> bool:
     return True
 
 
+def verify_vs() -> tuple[bool, str]:
+    """Check that PROJECT_VS_INDEX is set and the VS index is ONLINE."""
+    load_dotenv(ENV_FILE, override=True)
+    index_name = os.environ.get("PROJECT_VS_INDEX", "").strip()
+    if not index_name:
+        return False, "PROJECT_VS_INDEX not set"
+    endpoint_name = os.environ.get("PROJECT_VS_ENDPOINT", "").strip()
+    if not endpoint_name:
+        return False, "PROJECT_VS_ENDPOINT not set"
+    try:
+        from databricks.vector_search.client import VectorSearchClient
+        w = WorkspaceClient()
+        host = w.config.host.rstrip("/")
+        token = w.config.authenticate().get("Authorization", "").replace("Bearer ", "")
+        vs_client = VectorSearchClient(workspace_url=host, personal_access_token=token, disable_notice=True)
+        idx = vs_client.get_index(index_name=index_name, endpoint_name=endpoint_name)
+        desc = idx.describe()
+        ready = desc.get("status", {}).get("ready", False)
+        if ready:
+            return True, f"ONLINE ({index_name})"
+        return False, f"not ready ({index_name})"
+    except Exception as e:
+        return False, str(e)
+
+
+def run_resource_vs() -> bool:
+    """Interactive setup for Vector Search index (KA fallback)."""
+    load_dotenv(ENV_FILE, override=True)
+
+    section("Vector Search (KA fallback)")
+
+    pdfs = sorted((ROOT / "data" / "pdf").glob("*.pdf"))
+    if pdfs:
+        print(f"  {C}PDFs in data/pdf/:{W}")
+        for p in pdfs:
+            print(f"    {B}+{W} {p.name}")
+    else:
+        print(f"  {WARN} No PDF files found in data/pdf/{W}")
+
+    ok, msg = verify_vs()
+    if ok:
+        print(f"  {OK} VS index is ONLINE: {C}{msg}{W}")
+        choices = ["keep", "recreate"]
+    else:
+        print(f"  {WARN} {msg}{W}")
+        choices = []
+
+    choices.append("provision")
+    choices.append("skip")
+
+    while True:
+        print(f"\n  {C}Action?{W}")
+        for i, c in enumerate(choices, 1):
+            print(f"    {B}[{i}]{W} {c}")
+        idx = _read_choice(f"  Choice (1-{len(choices)}): ", len(choices))
+        if idx is None:
+            return True
+        if not (1 <= idx <= len(choices)):
+            print(f"  {WARN} Invalid choice{W}")
+            continue
+        choice = choices[idx - 1]
+
+        if choice == "keep":
+            return True
+
+        if choice == "skip":
+            print(f"  {WARN} Skipping Vector Search setup — agent will run without VS fallback{W}")
+            return True
+
+        break  # "provision" or "recreate" -> fall through
+
+    print(f"\n  {B}Provisioning Vector Search index...{W}\n")
+
+    rc = subprocess.call(
+        ["uv", "run", "python", "scripts/py/vs/create_vs_from_pdfs.py"],
+        cwd=ROOT,
+    )
+    if rc != 0:
+        print(f"  {FAIL} Vector Search provisioning failed (exit {rc}){W}\n")
+        return False
+
+    load_dotenv(ENV_FILE, override=True)
+    ok, msg = verify_vs()
+    if ok:
+        print(f"  {OK} {G}Vector Search index ready: {msg}{W}\n")
+        print(f"  {CONF}+  Vector Search index ready.{W}")
+    else:
+        print(f"  {WARN} VS provisioned but verify returned: {msg}{W}\n")
+    return True
+
+
 def run_check_only() -> None:
     """Quick check of all resources (non-interactive)."""
     load_dotenv(ENV_FILE, override=True)
@@ -2117,6 +2208,10 @@ def run_check_only() -> None:
     print(f"  {OK if ok else FAIL} PROJECT_KA_PASSENGERS {C}({msg}){W}")
     if not ok:
         all_ok = False
+
+    section("Vector Search")
+    ok, msg = verify_vs()
+    print(f"  {OK if ok else WARN} PROJECT_VS_INDEX {C}({msg}){W}")
 
     section("MLflow")
     ok, msg = verify_mlflow()
@@ -2370,6 +2465,7 @@ STEPS: list[tuple[str, str, object]] = [
     ("procedures",  "UC Procedures (data/proc/)",     run_resource_procedures),
     ("genie",       "PROJECT_GENIE_CHECKIN",          run_resource_genie),
     ("ka",          "Knowledge Assistants",           run_resource_ka),
+    ("vs",          "Vector Search (KA fallback)",    run_resource_vs),
     ("mlflow",      "MLFLOW_EXPERIMENT_ID",           run_resource_mlflow),
     ("model",       "AGENT_MODEL_ENDPOINT + TOKEN",   run_step_model),
     ("model-test",  "Foundation model connection test", run_resource_model_test),
@@ -2429,6 +2525,7 @@ def main() -> None:
     run_resource_procedures()
     run_resource_genie()
     run_resource_ka()
+    run_resource_vs()
     run_resource_mlflow()
     run_step_model()
     run_resource_model_test()

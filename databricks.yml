@@ -31,10 +31,6 @@ resources:
           serving_endpoint:
             name: 'databricks-claude-sonnet-4-6'
             permission: 'CAN_QUERY'
-        - name: 'ka_endpoint'
-          serving_endpoint:
-            name: 'ka-e0012089-endpoint'
-            permission: 'CAN_QUERY'
 
 targets:
   dev:
@@ -48,4 +44,4 @@ targets:
     resources:
       apps:
         agent_app:
-          name: 'agent-airops-voca'
+          name: 'agent-airops-voca-lab-user'

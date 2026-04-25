@@ -22,5 +22,3 @@ env:
     value: "dbacademy.airops"
   - name: DATABRICKS_WAREHOUSE_ID
     value: "44d9f9e1e0624dfc"
-  - name: PROJECT_KA_PASSENGERS
-    value: "ka-e0012089-endpoint"

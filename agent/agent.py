@@ -43,6 +43,21 @@ def init_mcp_client(workspace_client: WorkspaceClient) -> DatabricksMultiServerM
                 workspace_client=workspace_client,
             ),
         )
+
+    # Vector Search MCP server (fallback when KA is unavailable)
+    vs_index = os.environ.get("PROJECT_VS_INDEX", "").strip()
+    if vs_index and "." in vs_index:
+        parts = vs_index.rsplit(".", 2)
+        if len(parts) >= 2:
+            cat, sch = parts[0], parts[1]
+            servers.append(
+                DatabricksMCPServer(
+                    name="vector-search-docs",
+                    url=f"{host_name}/api/2.0/mcp/vector-search/{cat}/{sch}",
+                    workspace_client=workspace_client,
+                ),
+            )
+
     return DatabricksMultiServerMCPClient(servers)
 
 

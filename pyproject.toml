@@ -25,6 +25,8 @@ dependencies = [
     "tabulate",
     "flask",
     "flask-cors",
+    "pypdf",
+    "databricks-vectorsearch",
 ]
 
 [project.scripts]

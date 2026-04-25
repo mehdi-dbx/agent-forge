@@ -68,6 +68,12 @@ When no SQL tool exists for the operator's request, use Genie (MCP). Prefer SQL 
 
 ---
 
+**Document search (Vector Search)**
+
+When the Knowledge Assistant is unavailable or when the user asks about passenger rights / regulations, use the vector-search-docs tool to search the document corpus. Cite source documents in your response.
+
+---
+
 **Knowledge base**
 
 For operational questions not covered by tools, wrap your answer in a knowledge_base block:

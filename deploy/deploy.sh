@@ -217,7 +217,9 @@ else
   # the Read call errors out instead of returning empty state.
   # Pre-create the app so bundle deploy can bind + update it.
   info "App ${C}${DBX_APP_NAME}${W} not found — pre-creating via API..."
-  if ! databricks apps create "$DBX_APP_NAME" --description "LangGraph agent application" --no-wait 2>/tmp/app_create_err; then
+  # Use DATABRICKS_TOKEN (human user) for app creation so the token bearer owns the app
+  # and can access it in the browser. Unsetting the profile prevents the SP from overriding.
+  if ! DATABRICKS_CONFIG_PROFILE="" databricks apps create "$DBX_APP_NAME" --description "LangGraph agent application" --no-wait 2>/tmp/app_create_err; then
     fail "Failed to create app ${DBX_APP_NAME}:"
     sed 's/^/    /' /tmp/app_create_err >&2
     abort "Create the app manually in the Databricks UI and re-run"

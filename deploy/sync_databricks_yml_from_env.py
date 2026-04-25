@@ -462,10 +462,14 @@ def main() -> int:
                 changes.append(("app.yaml  AGENT_MODEL_ENDPOINT", None, f"{effective_endpoint} ({label})"))
 
         # Standard value fields
+        vs_index = os.environ.get("PROJECT_VS_INDEX", "").strip()
+        vs_endpoint = os.environ.get("PROJECT_VS_ENDPOINT", "").strip()
         for env_name, value in [
             ("PROJECT_UNITY_CATALOG_SCHEMA", schema_spec),
             ("DATABRICKS_WAREHOUSE_ID", wh_id),
             ("PROJECT_KA_PASSENGERS", ka_endpoint),
+            ("PROJECT_VS_INDEX", vs_index),
+            ("PROJECT_VS_ENDPOINT", vs_endpoint),
         ]:
             if not value:
                 # Remove if present (not configured)
@@ -498,6 +502,8 @@ def main() -> int:
         ("PROJECT_UNITY_CATALOG_SCHEMA ", schema_spec),
         ("PROJECT_GENIE_CHECKIN        ", genie_id_display),
         ("PROJECT_KA_PASSENGERS        ", ka_endpoint),
+        ("PROJECT_VS_INDEX             ", os.environ.get("PROJECT_VS_INDEX", "").strip()),
+        ("PROJECT_VS_ENDPOINT          ", os.environ.get("PROJECT_VS_ENDPOINT", "").strip()),
         ("AGENT_MODEL_ENDPOINT         ", endpoint),
         ("DBX_APP_NAME                 ", app_name),
     ]:
