@@ -232,6 +232,31 @@ def _verify_connection(host: str, token: str | None, profile: str | None) -> tup
         return False, str(e)
 
 
+def _host_from_auth_env(profile_name: str) -> str:
+    """Extract DATABRICKS_HOST from ``databricks auth env --profile <name>``.
+
+    Handles both the current JSON format and the legacy KEY=value text format.
+    """
+    try:
+        result = subprocess.run(
+            ["databricks", "auth", "env", "--profile", profile_name],
+            capture_output=True, text=True,
+        )
+        # Try JSON first (current CLI default)
+        try:
+            data = json.loads(result.stdout)
+            return data.get("env", {}).get("DATABRICKS_HOST", "")
+        except (json.JSONDecodeError, ValueError):
+            pass
+        # Fallback: legacy text format (KEY=value)
+        for line in result.stdout.splitlines():
+            if "DATABRICKS_HOST" in line and "=" in line:
+                return line.split("=", 1)[-1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ""
+
+
 # ── Store workspace configuration ─────────────────────────────────────────────
 
 def _configure_store_workspace() -> bool:
@@ -314,17 +339,7 @@ def _configure_store_workspace() -> bool:
             # Resolve host
             host = phost
             if not host:
-                try:
-                    result = subprocess.run(
-                        ["databricks", "auth", "env", "--profile", pname],
-                        capture_output=True, text=True,
-                    )
-                    for line in result.stdout.splitlines():
-                        if "DATABRICKS_HOST" in line:
-                            host = line.split("=", 1)[-1].strip().strip('"').strip("'")
-                            break
-                except Exception:
-                    pass
+                host = _host_from_auth_env(pname)
             if not host:
                 val = _read_line("Enter workspace URL: ")
                 if not val:

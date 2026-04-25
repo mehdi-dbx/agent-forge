@@ -2,42 +2,24 @@
 
 import json
 import os
-import time
 
-import requests
 from databricks.sdk import WorkspaceClient
 from langchain_core.tools import tool
-
-_MAX_RETRIES = 3
-_RETRY_BACKOFF = 15
 
 _workspace_client = WorkspaceClient()
 
 
 def _ka_url() -> str:
-    host = _workspace_client.config.host.rstrip("/")
     endpoint = os.environ.get("PROJECT_KA_PASSENGERS", "").strip()
-    if not host or not endpoint:
+    if not endpoint:
         raise ValueError("PROJECT_KA_PASSENGERS is not configured")
-    return f"{host}/serving-endpoints/{endpoint}/invocations"
+    return f"/serving-endpoints/{endpoint}/invocations"
 
 
-def _auth_header() -> str:
-    return f"Bearer {_workspace_client.config.token}"
-
-
-def _call_ka(query: str) -> dict:
-    url = _ka_url()
-    headers = {"Authorization": _auth_header(), "Content-Type": "application/json"}
+def _call_ka(query: str):
+    path = _ka_url()
     payload = {"input": [{"role": "user", "content": query}]}
-    resp = requests.post(url, headers=headers, json=payload, timeout=90)
-    for _ in range(1, _MAX_RETRIES):
-        if resp.status_code != 500:
-            break
-        time.sleep(_RETRY_BACKOFF)
-        resp = requests.post(url, headers=headers, json=payload, timeout=90)
-    resp.raise_for_status()
-    return resp.json()
+    return _workspace_client.api_client.do("POST", path, body=payload)
 
 
 def _extract_answer(response: dict) -> str:

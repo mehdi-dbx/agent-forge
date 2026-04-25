@@ -112,7 +112,7 @@ app.get('/api/current-time', async (req, res) => {
 
 // Reset demo state: runs scripts/reset_state.py (sequence of SQL scripts)
 app.post('/api/reset-state', authMiddleware, requireAuth, (req, res) => {
-  // Server lives at e2e-chatbot-app-next/server; project root is two levels up
+  // Server lives at app/server; project root is two levels up
   const projectRoot = path.join(__dirname, '..', '..', '..');
   const scriptPath = path.join(projectRoot, 'scripts', 'reset_state.py');
   const proc = spawn('uv', ['run', 'python', scriptPath], {

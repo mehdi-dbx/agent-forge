@@ -158,4 +158,4 @@ Drops tables, stored procedures, functions, Genie space, and MLflow experiment â
 | `docs/Build & setup flow.md` | Layered build and setup flow diagram |
 | `config/.env.example` | All environment variable definitions |
 | `config/ka/ka_passengers.yml` | Example KA configuration |
-| `e2e-chatbot-app-next/CLAUDE.md` | Frontend conventions and commands |
+| `app/CLAUDE.md` | Frontend conventions and commands |

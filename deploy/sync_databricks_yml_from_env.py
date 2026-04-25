@@ -34,6 +34,40 @@ ARR = f"{C}←{W}"
 
 SECRET_SCOPE = "agent-forge"
 
+
+def _resource_exists(api_path: str) -> bool:
+    """Check if a Databricks resource exists via GET on the given API path.
+
+    Returns True on success or if verification is impossible (missing creds,
+    network error) — only returns False when the API explicitly says 404.
+    """
+    import requests
+    host = os.environ.get("DATABRICKS_HOST", "").strip().rstrip("/")
+    token = os.environ.get("DATABRICKS_TOKEN", "").strip()
+    if not host or not token:
+        return True  # can't verify — assume exists
+    try:
+        r = requests.get(
+            f"{host}{api_path}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        return r.status_code != 404
+    except Exception:
+        return True  # network error — don't remove
+
+
+def _endpoint_exists(name: str) -> bool:
+    return _resource_exists(f"/api/2.0/serving-endpoints/{name}")
+
+
+def _warehouse_exists(wh_id: str) -> bool:
+    return _resource_exists(f"/api/2.0/sql/warehouses/{wh_id}")
+
+
+def _genie_space_exists(space_id: str) -> bool:
+    return _resource_exists(f"/api/2.0/genie/spaces/{space_id}")
+
 DATABRICKS_YML_TEMPLATE = """\
 bundle:
   name: agent-forge
@@ -211,6 +245,9 @@ def main() -> int:
 
     # sql_warehouse.id <- DATABRICKS_WAREHOUSE_ID
     wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "").strip()
+    if wh_id and not _warehouse_exists(wh_id):
+        print(f"  {FAIL} Warehouse '{wh_id}' not found on workspace — fix DATABRICKS_WAREHOUSE_ID in .env.local")
+        return 1
     if wh_id:
         m = re.search(r"sql_warehouse:\s*\n\s+id: '([^']*)'", content)
         if m and m.group(1) != wh_id:
@@ -224,6 +261,9 @@ def main() -> int:
 
     # genie_space.space_id + name <- PROJECT_GENIE_CHECKIN
     genie_id = os.environ.get("PROJECT_GENIE_CHECKIN", "").strip()
+    if genie_id and not _genie_space_exists(genie_id):
+        print(f"  {FAIL} Genie space '{genie_id}' not found on workspace — fix PROJECT_GENIE_CHECKIN in .env.local")
+        return 1
     if genie_id:
         m = re.search(r"genie_space:.*?space_id: '([^']*)'", content, re.DOTALL)
         if m and m.group(1) != genie_id:
@@ -318,6 +358,9 @@ def main() -> int:
 
     elif endpoint and not _ep_name_from_url:
         # Local endpoint name (not a URL) — update serving_endpoint.name
+        if not _endpoint_exists(endpoint):
+            print(f"  {FAIL} Serving endpoint '{endpoint}' not found on workspace — fix AGENT_MODEL_ENDPOINT in .env.local")
+            return 1
         m = re.search(r"serving_endpoint:\s*\n\s+name: '([^']*)'", content)
         if m and m.group(1) != endpoint:
             content = re.sub(
@@ -330,6 +373,9 @@ def main() -> int:
 
     # ka_endpoint.name <- PROJECT_KA_PASSENGERS
     ka_endpoint = os.environ.get("PROJECT_KA_PASSENGERS", "").strip()
+    if ka_endpoint and not _endpoint_exists(ka_endpoint):
+        print(f"  {WARN} KA endpoint '{ka_endpoint}' not found on workspace — removing from bundle")
+        ka_endpoint = ""
     if ka_endpoint:
         m = re.search(r"ka_endpoint.*?serving_endpoint:.*?name: '([^']*)'", content, re.DOTALL)
         if m and m.group(1) != ka_endpoint:

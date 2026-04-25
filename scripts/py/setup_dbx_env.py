@@ -9,6 +9,7 @@ Usage:
   uv run python scripts/py/setup_dbx_env.py         # interactive setup
   uv run python scripts/py/setup_dbx_env.py --check # quick check only
 """
+import json
 import os
 import re
 import subprocess
@@ -156,7 +157,12 @@ def _read_choice(prompt: str, n: int) -> int | None:
         tty.setraw(fd)
         while True:
             ch = os.read(fd, 1).decode("utf-8", errors="ignore")  # bypass Python IO buffer
-            if ch == "\x1b":                    # ESC
+            if ch == "\x1b":                    # ESC or arrow key
+                # Peek: arrow keys send \x1b[A/B/C/D — consume and ignore
+                import select
+                if select.select([fd], [], [], 0.05)[0]:
+                    os.read(fd, 2)  # consume e.g. [A, [B, [C, [D
+                    continue        # ignore arrow key
                 sys.stdout.write(f" {DIM}(cancelled){W}\r\n")
                 sys.stdout.flush()
                 return None
@@ -206,7 +212,11 @@ def _read_line(prompt: str) -> str | None:
         tty.setraw(fd)
         while True:
             ch = os.read(fd, 1).decode("utf-8", errors="ignore")
-            if ch == "\x1b":                    # ESC
+            if ch == "\x1b":                    # ESC or arrow key
+                import select
+                if select.select([fd], [], [], 0.05)[0]:
+                    os.read(fd, 2)  # consume arrow key sequence
+                    continue
                 sys.stdout.write(f" {DIM}(cancelled){W}\r\n")
                 sys.stdout.flush()
                 return None
@@ -604,18 +614,7 @@ def run_resource_host() -> bool:
             profile_name = profiles[pidx - 1][0]
 
             # Extract host from `databricks auth env --profile <name>`
-            host = ""
-            try:
-                result = subprocess.run(
-                    ["databricks", "auth", "env", "--profile", profile_name],
-                    capture_output=True, text=True,
-                )
-                for line in result.stdout.splitlines():
-                    if "DATABRICKS_HOST" in line:
-                        host = line.split("=", 1)[-1].strip().strip('"').strip("'")
-                        break
-            except Exception:
-                host = ""
+            host = _host_from_auth_env(profile_name)
 
             if not host:
                 print(f"  {WARN} Could not extract host for profile {profile_name} — enter manually{W}")
@@ -759,6 +758,31 @@ def list_warehouses() -> list[tuple[str, str]]:
         return [(getattr(wh, "name", "") or str(wh.id), str(wh.id)) for wh in whs]
     except Exception:
         return []
+
+
+def _host_from_auth_env(profile_name: str) -> str:
+    """Extract DATABRICKS_HOST from ``databricks auth env --profile <name>``.
+
+    Handles both the current JSON format and the legacy KEY=value text format.
+    """
+    try:
+        result = subprocess.run(
+            ["databricks", "auth", "env", "--profile", profile_name],
+            capture_output=True, text=True,
+        )
+        # Try JSON first (current CLI default)
+        try:
+            data = json.loads(result.stdout)
+            return data.get("env", {}).get("DATABRICKS_HOST", "")
+        except (json.JSONDecodeError, ValueError):
+            pass
+        # Fallback: legacy text format (KEY=value)
+        for line in result.stdout.splitlines():
+            if "DATABRICKS_HOST" in line and "=" in line:
+                return line.split("=", 1)[-1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ""
 
 
 def list_dbx_profiles() -> list[tuple[str, bool]]:
@@ -1766,7 +1790,10 @@ def run_resource(
             if idx is None or not (1 <= idx <= len(catalogs)):
                 return True
             new_catalog = catalogs[idx - 1]
-            new_val = f"{new_catalog}.{current_schema}"
+            suggested = current_schema or "main"
+            schema_input = _read_line(f"  Schema name [{suggested}]: ")
+            schema_name = schema_input.strip() if schema_input and schema_input.strip() else suggested
+            new_val = f"{new_catalog}.{schema_name}"
             print(f"  {C}→ Setting PROJECT_UNITY_CATALOG_SCHEMA = {new_val}{W}")
             if cur:
                 comment_active_for_key(ENV_FILE, key)
@@ -1941,6 +1968,7 @@ def run_resource_ka() -> bool:
             choices.append(f"use: {name} [{state}]")
 
     choices.append("provision")
+    choices.append("skip")
 
     while True:
         print(f"\n  {C}Action?{W}")
@@ -1956,6 +1984,10 @@ def run_resource_ka() -> bool:
         choice = choices[idx - 1]
 
         if choice == "keep":
+            return True
+
+        if choice == "skip":
+            print(f"  {WARN} Skipping KA setup — agent will run without Knowledge Assistant{W}")
             return True
 
         if choice and choice.startswith("use: "):

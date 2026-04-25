@@ -46,7 +46,7 @@ This project includes a [Databricks Asset Bundle (DAB)](https://docs.databricks.
 1. **Clone the repo**:
    ```bash
    git clone https://github.com/databricks/app-templates
-   cd e2e-chatbot-app-next
+   cd app
    ```
 2. **Databricks authentication**: Ensure auth is configured as described in [Prerequisites](#prerequisites).
 3. **Specify serving endpoint and address TODOs in databricks.yml**: Address the TODOs in `databricks.yml`, setting the default value of `serving_endpoint_name` to the name of the custom code agent or Agent Bricks endpoint to chat with. The optional TODOs wil allow you to deploy a Lakebase database bound to your application, which will allow for chat history to be persisted.
@@ -107,7 +107,7 @@ Use our automated quickstart script for the fastest setup experience:
 
    ```bash
    git clone https://github.com/databricks/app-templates
-   cd e2e-chatbot-app-next
+   cd app
    ```
 
 2. **Run the quickstart script**:
@@ -152,7 +152,7 @@ If you prefer to configure the environment manually:
 
    ```bash
    git clone https://github.com/databricks/app-templates
-   cd e2e-chatbot-app-next
+   cd app
    npm install
    ```
 

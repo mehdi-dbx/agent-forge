@@ -17,7 +17,7 @@ This is a production-ready, full-stack chatbot application built specifically fo
 ### Monorepo Structure
 
 ```
-e2e-chatbot-app-next/
+app/
 ├── client/                 # React + Vite frontend (@databricks/chatbot-client)
 ├── server/                 # Express backend (@databricks/chatbot-server)
 └── packages/              # Shared libraries

@@ -19,8 +19,8 @@ env:
   - name: AGENT_MODEL_ENDPOINT
     value: "databricks-claude-sonnet-4-6"
   - name: PROJECT_UNITY_CATALOG_SCHEMA
-    value: "db_workshop_london.airties_mehdi"
+    value: "dbacademy.airops"
   - name: DATABRICKS_WAREHOUSE_ID
-    value: "6435bcfcf68fd910"
+    value: "44d9f9e1e0624dfc"
   - name: PROJECT_KA_PASSENGERS
     value: "ka-e0012089-endpoint"

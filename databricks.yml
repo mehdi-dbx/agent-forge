@@ -19,12 +19,12 @@ resources:
             permission: 'CAN_MANAGE'
         - name: 'sql_warehouse'
           sql_warehouse:
-            id: '6435bcfcf68fd910'
+            id: '44d9f9e1e0624dfc'
             permission: 'CAN_USE'
         - name: 'genie_space'
           genie_space:
             name: 'agent-forge-checkin'
-            space_id: '01f13e5b64ab1c68937e8d964e779116'
+            space_id: '01f1403bb46b12ef87cefe518c686a0f'
             permission: 'CAN_RUN'
 
         - name: 'serving_endpoint'
@@ -48,4 +48,4 @@ targets:
     resources:
       apps:
         agent_app:
-          name: 'agent-airties-mehdi'
+          name: 'agent-airops-voca'
