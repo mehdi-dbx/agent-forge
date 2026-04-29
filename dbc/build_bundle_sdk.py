@@ -62,6 +62,22 @@ BUNDLE_FILES: list[str] = [
     "tools/update_flight_risk.py",
     "tools/query_checkin_metrics.py",
     "tools/query_passengers_ka.py",
+    "tools/query_checkin_performance_metrics.py",
+    "tools/create_checkin_incident.py",
+    "tools/create_border_incident.py",
+    "tools/query_checkin_agent_staffing.py",
+    "tools/query_border_officer_staffing.py",
+    "tools/query_egate_availability.py",
+    "tools/query_available_agents_for_redeployment.py",
+    "tools/update_checkin_agent.py",
+    "tools/update_border_officer.py",
+    "tools/back_to_normal.py",
+    "tools/confirm_arrival.py",
+    "tools/get_current_time.py",
+    "tools/query_border_terminal_details.py",
+    "tools/query_border_officers_by_post.py",
+    "tools/query_checkin_agents_by_counter_status.py",
+    "tools/query_staffing_duties.py",
     "data/__init__.py",
     "data/py/__init__.py",
     "data/py/sql_utils.py",
@@ -71,8 +87,20 @@ BUNDLE_FILES: list[str] = [
     "data/init/create_border_officers.sql",
     "data/init/create_border_terminals.sql",
     "data/proc/update_flight_risk.sql",
+    "data/proc/update_checkin_agents_procedure.sql",
+    "data/proc/update_border_officer_procedure.sql",
+    "data/proc/confirm_arrival_procedure.sql",
     "data/func/checkin_metrics.sql",
     "data/func/flights_at_risk.sql",
+    "data/func/checkin_performance_metrics.sql",
+    "data/func/checkin_agent_staffing.sql",
+    "data/func/border_officer_staffing.sql",
+    "data/func/egate_availability.sql",
+    "data/func/available_agents_for_redeployment.sql",
+    "data/func/border_terminal_details.sql",
+    "data/func/border_officers_by_post.sql",
+    "data/func/checkin_agents_by_counter_status.sql",
+    "data/func/staffing_duties.sql",
     "prompt/main.prompt",
     "prompt/knowledge.base",
     "config/ka/ka_passengers.yml",
@@ -270,15 +298,26 @@ def _cell_tables_seed() -> str:
 
 def _cell_procedures() -> str:
     return textwrap.dedent(f'''\
-        # Cell 3: Stored Procedures + Functions
-        proc_path = Path(LOCAL_DIR) / "data" / "proc" / "update_flight_risk.sql"
-        proc_sql = proc_path.read_text().strip()
-        proc_sql = proc_sql.replace("__SCHEMA_QUALIFIED__", SCHEMA_QUALIFIED)
-        sql(proc_sql)
-        ok("update_flight_risk procedure created")
+        # Cell 3: Stored Procedures
+        _proc_dir = Path(LOCAL_DIR) / "data" / "proc"
+        _procedures = [
+            ("update_flight_risk.sql", "update_flight_risk"),
+            ("update_checkin_agents_procedure.sql", "update_checkin_agent"),
+            ("update_border_officer_procedure.sql", "update_border_officer"),
+            ("confirm_arrival_procedure.sql", "confirm_arrival"),
+        ]
+        for sql_file, proc_name in _procedures:
+            proc_path = _proc_dir / sql_file
+            proc_sql = proc_path.read_text().strip()
+            proc_sql = proc_sql.replace("__SCHEMA_QUALIFIED__", SCHEMA_QUALIFIED)
+            sql(proc_sql)
+            ok(f"{{proc_name}} procedure created")
+            try:
+                sql(f"GRANT EXECUTE ON PROCEDURE `{CATALOG}`.`{SCHEMA}`.{{proc_name}} TO `account users`")
+            except Exception:
+                pass
 
-        sql("GRANT EXECUTE ON PROCEDURE `{CATALOG}`.`{SCHEMA}`.update_flight_risk TO `account users`")
-        ok("Procedures and grants applied")
+        ok("All procedures and grants applied")
     ''')
 
 
@@ -420,7 +459,13 @@ def _cell_genie_space() -> str:
                 ]
             }},
             "data_sources": {{
-                "tables": [{{"identifier": f"{CATALOG}.{SCHEMA}.flights"}}],
+                "tables": [
+                    {{"identifier": f"{CATALOG}.{SCHEMA}.flights"}},
+                    {{"identifier": f"{CATALOG}.{SCHEMA}.checkin_metrics"}},
+                    {{"identifier": f"{CATALOG}.{SCHEMA}.checkin_agents"}},
+                    {{"identifier": f"{CATALOG}.{SCHEMA}.border_officers"}},
+                    {{"identifier": f"{CATALOG}.{SCHEMA}.border_terminals"}},
+                ],
                 "metric_views": [],
             }},
             "instructions": {{
@@ -522,6 +567,8 @@ def _cell_knowledge_assistant() -> str:
                 instructions = fmt.strip() + "\\n\\n" + instructions.strip()
 
         # --- Check if KA already exists ---
+        KA_ENDPOINT = ""
+        ka_name = ""
         existing_ka = None
         try:
             for ka in w.knowledge_assistants.list_knowledge_assistants():
@@ -600,7 +647,7 @@ def _cell_knowledge_assistant() -> str:
         ka_ready = bool(KA_ENDPOINT)
         if not KA_ENDPOINT:
             KA_ENDPOINT = ""
-        for attempt in range(60 if not ka_ready else 0):
+        for attempt in range(60 if (not ka_ready and ka_name) else 0):
             try:
                 ka_detail = w.knowledge_assistants.get_knowledge_assistant(ka_name)
                 state = ka_detail.state
@@ -744,6 +791,8 @@ def _cell_deploy_app() -> str:
             "Your app is putting on its cape...",
             "Loading awesomeness... please stand by...",
         ]
+
+        app_url = f"{{host}}/apps/{{APP_NAME}}"
 
         print()
         info(f"Creating app '{{APP_NAME}}'...")
@@ -1089,7 +1138,10 @@ def main():
     print(f"  Output: {C}{output_dir}{W}\n")
 
     if output_dir.exists():
-        shutil.rmtree(output_dir)
+        # Preserve files not generated by this script (e.g. agent_workshop.py/zip)
+        for f in output_dir.iterdir():
+            if f.name.startswith("agent_setup") or f.name == "config.json":
+                f.unlink()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"{BOLD}1. Frontend{W}")
@@ -1142,6 +1194,24 @@ def main():
     setup_zip = output_dir / "agent_setup.zip"
     create_setup_zip(setup_zip, notebook_content, has_frontend)
     print(f"  {G}[+]{W} {setup_zip.name} ({setup_zip.stat().st_size:,} bytes)")
+
+    # Extract agent_setup.py alongside the zip for easy access
+    setup_py = output_dir / "agent_setup.py"
+    setup_py.write_text(notebook_content, encoding="utf-8")
+    print(f"  {G}[+]{W} {setup_py.name} ({setup_py.stat().st_size:,} bytes)")
+
+    # Copy + zip agent_workshop.py if it exists
+    workshop_src = ROOT / "dbc" / "agent_workshop.py"
+    if workshop_src.exists():
+        workshop_dst = output_dir / "agent_workshop.py"
+        shutil.copy2(workshop_src, workshop_dst)
+        workshop_zip = output_dir / "agent_workshop.zip"
+        with zipfile.ZipFile(workshop_zip, "w", zipfile.ZIP_DEFLATED) as wz:
+            wz.write(str(workshop_src), "agent_workshop.py")
+        print(f"  {G}[+]{W} {workshop_zip.name} ({workshop_zip.stat().st_size:,} bytes)")
+        print(f"  {G}[+]{W} {workshop_dst.name} ({workshop_dst.stat().st_size:,} bytes)")
+    else:
+        print(f"  {Y}[!]{W} agent_workshop.py not found — skipping")
 
     config_path = output_dir / "config.json"
     config = generate_config_json()
